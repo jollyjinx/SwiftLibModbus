@@ -53,7 +53,23 @@ class SwiftLibModbus: NSObject {
         }
         return true
     }
-    
+
+    func connect(success: @escaping () -> Void, failure: @escaping (NSError) -> Void) {
+        modbusQueue.async {
+            let ret = modbus_connect(self.mb!)
+            if ret == -1 {
+                let error = self.buildNSError(errno: errno)
+                DispatchQueue.main.async {
+                    failure(error)
+                }
+            } else {
+                DispatchQueue.main.async {
+                    success()
+                }
+            }
+        }
+    }
+
     func connect() async throws
     {
         return try await withCheckedThrowingContinuation
@@ -213,8 +229,51 @@ class SwiftLibModbus: NSObject {
             }
         }
     }
+
+
+    func readInputBitsFrom(startAddress: Int32, count: Int32) async throws -> [UInt8]
+    {
+        return try await withCheckedThrowingContinuation
+        {   continuation in
+            modbusQueue.async
+            {
+                let returnArray =  UnsafeMutablePointer<UInt8>.allocate(capacity: Int(count))
+
+                if modbus_read_input_bits(self.mb!, startAddress, count, returnArray) >= 0
+                {
+                    let intArray = Array(UnsafeBufferPointer(start: returnArray, count: Int(count)))
+                    continuation.resume(returning: intArray)
+                }
+                else
+                {
+                    let errorString = String(cString:modbus_strerror(errno))
+                    continuation.resume(throwing: ModbusError.couldNotConnect(error:errorString))
+                }
+            }
+        }
+    }
     
-    
+    func readRegistersFrom(startAddress: Int32, count: Int32) async throws -> [UInt16]
+    {
+        return try await withCheckedThrowingContinuation
+        {   continuation in
+            modbusQueue.async
+            {
+                let returnArray =  UnsafeMutablePointer<UInt16>.allocate(capacity: Int(count))
+
+                if modbus_read_registers(self.mb!, startAddress, count, returnArray) >= 0
+                {
+                    let intArray = Array(UnsafeBufferPointer(start: returnArray, count: Int(count)))
+                    continuation.resume(returning: intArray)
+                }
+                else
+                {
+                    let errorString = String(cString:modbus_strerror(errno))
+                    continuation.resume(throwing: ModbusError.couldNotConnect(error:errorString))
+                }
+            }
+        }
+    }
     func readRegistersFrom(startAddress: Int32, count: Int32, success: @escaping ([AnyObject]) -> Void, failure: @escaping (NSError) -> Void) {
         modbusQueue.async {
             let tab_reg: UnsafeMutablePointer<UInt16> = UnsafeMutablePointer<UInt16>.allocate(capacity: Int(count))

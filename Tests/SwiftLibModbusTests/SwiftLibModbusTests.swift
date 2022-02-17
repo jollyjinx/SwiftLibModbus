@@ -2,18 +2,16 @@ import XCTest
 @testable import SwiftLibModbus
 
 final class SwiftLibModbusTests: XCTestCase {
-    func testConnectSunnyboy3() async throws {
-        // This is an example of a functional test case.
-        // Use XCTAssert and related functions to verify your tests produce the correct
-        // results.
-        print("Test started")
-        let a = SwiftLibModbus(ipAddress: "10.112.16.107", port: 502, device: 3)
-        XCTAssertNotNil(a)
-        
+    var device:SwiftLibModbus!
+
+    override func setUp() async throws {
+        print("setup")
+        device = SwiftLibModbus(ipAddress: "10.112.16.107", port: 502, device: 3)       // testing with an sma inverter right now.
+        XCTAssertNotNil(device)
         do
-        {   try await a.connect()
+        {   try await device.connect()
             print("Connected")
-            a.disconnect()
+            device.disconnect()
         }
         catch
         {
@@ -21,4 +19,23 @@ final class SwiftLibModbusTests: XCTestCase {
             XCTFail()
         }
     }
+
+
+    func testReadGridFrequency() async throws {
+        print("testReadGridFrequency")
+
+        do
+        {
+            let frequency = try await device.readRegistersFrom(startAddress: 30803, count: 2)
+
+            print("Frequency:\(frequency)")
+        }
+        catch
+        {
+            print("Error \(error)")
+            XCTFail()
+        }
+    }
+
+
 }
