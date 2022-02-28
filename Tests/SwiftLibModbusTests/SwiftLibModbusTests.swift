@@ -8,8 +8,8 @@ final class SwiftLibModbusTests: XCTestCase {
         print("setup")
 
 
-        device = try? ModbusDevice(ipAddress: "10.112.16.107", port: 502, device: 3)       // testing with an sma inverter right now. (sunnyboy3)
-//        device = try? ModbusDevice(ipAddress: "10.112.16.127", port: 502, device: 3)       // testing with an sma inverter right now (sunnyboy4)
+//        device = try? ModbusDevice(ipAddress: "10.112.16.107", port: 502, device: 3)       // testing with an SMA inverter right now. (sunnyboy3)
+        device = try? ModbusDevice(ipAddress: "10.112.16.127", port: 502, device: 3)       // testing with an SMA inverter right now (sunnyboy4)
         XCTAssertNotNil(device)
         do
         {   try await device.connect()
@@ -30,9 +30,9 @@ final class SwiftLibModbusTests: XCTestCase {
 
         do
         {
-            let frequency:[UInt32] = try await device.readRegisters(from: 30803, count: 1)
-
-            print("Frequency:\(frequency[0])")
+            let values:[UInt32] = try await device.readRegisters(from: 30803, count: 1)
+            let frequency =  Decimal(values[0]) / 100
+            print("Frequency:\(frequency) Hz")
         }
         catch
         {
@@ -48,9 +48,8 @@ final class SwiftLibModbusTests: XCTestCase {
         do
         {
             let values:[UInt64] = try await device.readRegisters(from: 30517, count: 1)
-
             let yield =  Decimal(values[0]) / 1000
-            print("daily yield:\( yield )")
+            print("daily yield:\( yield ) kWh")
         }
         catch
         {
@@ -69,8 +68,8 @@ final class SwiftLibModbusTests: XCTestCase {
             let values:[UInt8] = try await device.readRegisters(from: 40631, count: 12)
 
             let validCharacters = values[0..<(values.firstIndex(where: { $0 == 0 }) ?? values.count)]
-
             let string = String(validCharacters.map{ Character(UnicodeScalar($0)) })
+
             print("Name:\( string )")
         }
         catch
