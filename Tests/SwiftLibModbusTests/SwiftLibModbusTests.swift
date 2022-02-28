@@ -26,7 +26,8 @@ final class SwiftLibModbusTests: XCTestCase {
 
         do
         {
-            let frequency = try await device.readRegistersFrom(startAddress: 30803, count: 2)
+            let frequency:[UInt16] = try await device.readRegisters(from: 30803, count: 2)
+//            let frequency = try await device.readRegistersFrom(startAddress: 30803, count: 2)
 
             print("Frequency:\(frequency)")
         }

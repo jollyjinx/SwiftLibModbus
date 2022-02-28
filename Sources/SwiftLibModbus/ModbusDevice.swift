@@ -13,6 +13,49 @@ enum ModbusError: Error {
     case couldNotConnect(error:String)
 }
 
+import Foundation.NSDate // for TimeInterval
+
+// https://forums.swift.org/t/running-an-async-task-with-a-timeout/49733/12
+struct TimedOutError: Error, Equatable {}
+
+///
+/// Execute an operation in the current task subject to a timeout.
+///
+/// - Parameters:
+///   - seconds: The duration in seconds `operation` is allowed to run before timing out.
+///   - operation: The async operation to perform.
+/// - Returns: Returns the result of `operation` if it completed in time.
+/// - Throws: Throws ``TimedOutError`` if the timeout expires before `operation` completes.
+///   If `operation` throws an error before the timeout expires, that error is propagated to the caller.
+
+public func withTimeout<R>(
+    seconds: TimeInterval,
+    operation: @escaping @Sendable () async throws -> R
+) async throws -> R {
+    return try await withThrowingTaskGroup(of: R.self) { group in
+        let deadline = Date(timeIntervalSinceNow: seconds)
+
+        // Start actual work.
+        group.addTask {
+            return try await operation()
+        }
+        // Start timeout child task.
+        group.addTask {
+            let interval = deadline.timeIntervalSinceNow
+            if interval > 0 {
+                try await Task.sleep(nanoseconds: UInt64(interval * Double(NSEC_PER_SEC)))
+            }
+            try Task.checkCancellation()
+            // We’ve reached the timeout.
+            throw TimedOutError()
+        }
+        // First finished child task wins, cancel the other task.
+        let result = try await group.next()!
+        group.cancelAll()
+        return result
+    }
+}
+
 actor ModbusDevice
 {
     let modbusdevice: OpaquePointer
@@ -75,7 +118,37 @@ actor ModbusDevice
         }
     }
 
-    func readRegistersFrom(startAddress: Int32, count: Int32) async throws -> [UInt16]
+    func readRegisters<T:FixedWidthInteger>(from startAddress: Int, count: Int) async throws -> [T]
+    {
+        return try await withCheckedThrowingContinuation
+        {   continuation in
+
+            let wordWidth = (T.bitWidth + 15) / 16
+            let wordCount = count * wordWidth
+            let byteCount = wordCount * 2
+            print("Bytecount:\(byteCount) , wordCount:\(wordCount) wordWidth:\(wordWidth)")
+            let rawPointer = UnsafeMutableRawPointer.allocate(byteCount: byteCount,alignment: 8)
+            defer {
+              rawPointer.deallocate()
+            }
+            let typedPointer = rawPointer.bindMemory(to: UInt16.self, capacity: wordCount)
+            typedPointer.initialize(repeating: 0, count: count)
+
+            if modbus_read_registers(modbusdevice, Int32(startAddress), Int32(wordCount), typedPointer ) >= 0
+            {
+                let readPointer = rawPointer.bindMemory(to: T.self, capacity: count)
+                let returnArray:[T] = Array(UnsafeBufferPointer(start: readPointer, count: count))
+                continuation.resume(returning: returnArray)
+            }
+            else
+            {
+                let errorString = String(cString:modbus_strerror(errno))
+                continuation.resume(throwing: ModbusError.couldNotConnect(error:errorString))
+            }
+        }
+    }
+
+    func writeRegisters(startAddress: Int32, count: Int32) async throws -> [UInt16]
     {
         return try await withCheckedThrowingContinuation
         {   continuation in
@@ -94,6 +167,40 @@ actor ModbusDevice
             }
         }
     }
+//    func writeRegistersFromAndOn(address: Int32, numberArray: NSArray, success: @escaping () -> Void, failure: @escaping (NSError) -> Void) {
+//        modbusQueue.async {
+//            let valueArray: UnsafeMutablePointer<UInt16> = UnsafeMutablePointer<UInt16>.allocate(capacity: numberArray.count)
+//            for i in 0..<numberArray.count {
+//                valueArray[i] = UInt16(numberArray[i] as! Int)
+//            }
+//
+//            if modbus_write_registers(self.mb!, address, Int32(numberArray.count), valueArray) >= 0 {
+//                DispatchQueue.main.async {
+//                    success()
+//                }
+//            } else {
+//                let error = self.buildNSError(errno: errno)
+//                DispatchQueue.main.async {
+//                    failure(error)
+//                }
+//            }
+//        }
+//    }
+//
+//    func writeRegister(address: Int32, value: Int32, success: @escaping () -> Void, failure: @escaping (NSError) -> Void) {
+//        modbusQueue.async {
+//            if modbus_write_register(self.mb!, address, value) >= 0 {
+//                DispatchQueue.main.async {
+//                    success()
+//                }
+//            } else {
+//                let error = self.buildNSError(errno: errno)
+//                DispatchQueue.main.async {
+//                    failure(error)
+//                }
+//            }
+//        }
+//    }
 
 }
 
