@@ -7,9 +7,8 @@ final class SwiftLibModbusTests: XCTestCase {
     override func setUp() async throws {
         print("setup")
 
-
-//        device = try? ModbusDevice(ipAddress: "10.112.16.107", port: 502, device: 3)       // testing with an SMA inverter right now. (sunnyboy3)
-        device = try? ModbusDevice(ipAddress: "10.112.16.127", port: 502, device: 3)       // testing with an SMA inverter right now (sunnyboy4)
+        device = try? ModbusDevice(ipAddress: "10.112.16.107", port: 502, device: 3)       // testing with an SMA inverter right now. (sunnyboy3)
+//        device = try? ModbusDevice(ipAddress: "10.112.16.127", port: 502, device: 3)       // testing with an SMA inverter right now (sunnyboy4)
         XCTAssertNotNil(device)
         do
         {   try await device.connect()
@@ -23,6 +22,12 @@ final class SwiftLibModbusTests: XCTestCase {
         }
     }
 
+    override func tearDown() async throws {
+        print("tearDown")
+
+        XCTAssertNotNil(device)
+        await device.disconnect()
+    }
 
     func testReadGridFrequency() async throws
     {
@@ -65,7 +70,7 @@ final class SwiftLibModbusTests: XCTestCase {
 
         do
         {
-            let values:[UInt8] = try await device.readRegisters(from: 40631, count: 12)
+            let values:[UInt8] = try await withTimeout(seconds: 0.11, operation: { let v:[UInt8] = try await self.device.readRegisters(from: 40631, count: 12) ; return v }    )
 
             let validCharacters = values[0..<(values.firstIndex(where: { $0 == 0 }) ?? values.count)]
             let string = String(validCharacters.map{ Character(UnicodeScalar($0)) })
