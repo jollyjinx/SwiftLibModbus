@@ -136,9 +136,17 @@ actor ModbusDevice
 
             if modbus_read_registers(modbusdevice, Int32(startAddress), Int32(wordCount), typedPointer ) >= 0
             {
-                let readPointer = rawPointer.bindMemory(to: T.self, capacity: count)
-                let returnArray:[T] = Array(UnsafeBufferPointer(start: readPointer, count: count))
-                continuation.resume(returning: returnArray)
+                let readPointer = rawPointer.bindMemory(to: UInt16.self, capacity: wordCount)
+                let valueArray = UnsafeMutableBufferPointer<UInt16>(start: readPointer, count: wordCount)
+
+                for i in 0..<valueArray.count {
+                    valueArray[i] = valueArray[i].bigEndian
+                }
+
+                let returnPointer = rawPointer.bindMemory(to: T.self, capacity: count)
+                let returnArray:[T] = Array(UnsafeBufferPointer(start: returnPointer, count: count))
+                let correctEndian = returnArray.map { $0.bigEndian }
+                continuation.resume(returning: correctEndian )
             }
             else
             {
