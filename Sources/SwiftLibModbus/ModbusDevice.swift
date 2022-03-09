@@ -98,6 +98,8 @@ actor ModbusDevice
     func disconnect() {
         modbus_close(modbusdevice)
     }
+
+
     func readInputBitsFrom(startAddress: Int32, count: Int32) async throws -> [UInt8]
     {
         return try await withCheckedThrowingContinuation
@@ -117,6 +119,45 @@ actor ModbusDevice
             }
         }
     }
+
+    func readInputRegisters<T:FixedWidthInteger>(from startAddress: Int, count: Int) async throws -> [T]
+    {
+        return try await withCheckedThrowingContinuation
+        {   continuation in
+
+            let wordWidth = (T.bitWidth + 15) / 16
+            let wordCount = count * wordWidth
+            let byteCount = wordCount * 2
+            print("Bytecount:\(byteCount) , wordCount:\(wordCount) wordWidth:\(wordWidth)")
+            let rawPointer = UnsafeMutableRawPointer.allocate(byteCount: byteCount,alignment: 8)
+            defer {
+              rawPointer.deallocate()
+            }
+            let typedPointer = rawPointer.bindMemory(to: UInt16.self, capacity: wordCount)
+            typedPointer.initialize(repeating: 0, count: count)
+
+            if modbus_read_input_registers(modbusdevice, Int32(startAddress), Int32(wordCount), typedPointer ) >= 0
+            {
+                let readPointer = rawPointer.bindMemory(to: UInt16.self, capacity: wordCount)
+                let valueArray = UnsafeMutableBufferPointer<UInt16>(start: readPointer, count: wordCount)
+
+                for i in 0..<valueArray.count {
+                    valueArray[i] = valueArray[i].bigEndian
+                }
+
+                let returnPointer = rawPointer.bindMemory(to: T.self, capacity: count)
+                let returnArray:[T] = Array(UnsafeBufferPointer(start: returnPointer, count: count))
+                let correctEndian = returnArray.map { $0.bigEndian }
+                continuation.resume(returning: correctEndian )
+            }
+            else
+            {
+                let errorString = String(cString:modbus_strerror(errno))
+                continuation.resume(throwing: ModbusError.couldNotConnect(error:errorString))
+            }
+        }
+    }
+
 
     func readRegisters<T:FixedWidthInteger>(from startAddress: Int, count: Int) async throws -> [T]
     {
