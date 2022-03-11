@@ -104,6 +104,28 @@ actor ModbusDevice
         return try await readRegisters(from:startAddress, count: count, type: .holding) as [T]
     }
 
+    func readASCIIString(from:Int,count:Int) async throws -> String
+    {
+        let values:[UInt8] = try await readHoldingRegisters(from: from, count: count)
+
+        let validCharacters = values[0..<(values.firstIndex(where: { $0 == 0 }) ?? values.count)]
+        let string = String(validCharacters.map{ Character(UnicodeScalar($0)) })
+        return string
+    }
+
+    func writeASCIIString(start:Int,count:Int,string:String) async throws
+    {
+        var values  = [UInt8](repeating: 0, count: count)
+        for (index,character) in string.enumerated()
+        {
+            values[index] = character.asciiValue ?? 0
+        }
+        try await writeRegisters(to: start, arrayToWrite:values)
+    }
+
+
+
+
 
     private func convertBigEndian<T:FixedWidthInteger>(typedPointer:UnsafeMutablePointer<T>,count:Int)
     {

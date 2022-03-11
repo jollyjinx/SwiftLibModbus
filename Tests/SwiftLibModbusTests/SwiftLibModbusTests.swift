@@ -199,29 +199,13 @@ final class SwiftLibModbusTests: XCTestCase {
 
         do
         {
-            let string = try await readString(from: 1310, count: 10)
+            let string = try await device.readASCIIString(from: 1310, count: 10)
             XCTAssert(string == "charger")
         }
         catch
         {
             XCTFail("Error \(error)")
         }
-    }
-
-    func readString(from:Int,count:Int) async throws -> String
-    {
-        let values:[UInt8] = try await withTimeout(seconds: 0.11, operation: { let v:[UInt8] = try await self.device.readHoldingRegisters(from: from, count: count) ; return v }    )
-
-        let validCharacters = values[0..<(values.firstIndex(where: { $0 == 0 }) ?? values.count)]
-        let string = String(validCharacters.map{ Character(UnicodeScalar($0)) })
-        return string
-    }
-    func writeString(start:Int,string:String) async throws
-    {
-        var name = string.map { $0.asciiValue ?? 0 }
-        name.append(0)
-        assert(name.count <= 10)
-        try await self.device.writeRegisters(to: start, arrayToWrite:name)
     }
 
     func testWriteName() async throws
@@ -232,8 +216,8 @@ final class SwiftLibModbusTests: XCTestCase {
         {
             for stringToWrite in ["evchar","EvChar"]
             {
-                try await writeString(start:310,string:stringToWrite)
-                let readSting = try await readString(from: 310, count: 10)
+                try await device.writeASCIIString(start:310, count: 10, string: stringToWrite)
+                let readSting = try await device.readASCIIString(from: 310, count: 10)
 
                 XCTAssert(readSting == stringToWrite )
             }
