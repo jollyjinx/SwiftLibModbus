@@ -70,14 +70,14 @@ final class SwiftLibModbusTests: XCTestCase {
                          arguments:["run","--rm","--init","--name","modbusserver","--platform","linux/amd64","-p","5020:5020","-v",serverConfigPath+":/server_config.json","oitc/modbus-server:latest","-f/server_config.json"])
         sleep(1)
 
+        device = try ModbusDevice(networkAddress: "127.0.0.1", port: 5020, deviceAddress: 180)       // testing with docker container
 
 //        device = try ModbusDevice(networkAddress: "10.112.16.107", port: 502, deviceAddress: 3)       // testing with an SMA inverter right now. (sunnyboy3)
 //        device = try ModbusDevice(networkAddress: "10.98.16.156", port: 502, deviceAddress: 180)       // testing with an Phoenix Charger
-        device = try ModbusDevice(networkAddress: "127.0.0.1", port: 5020, deviceAddress: 180)       // testing with an Phoenix Charger
 //        device = try ModbusDevice(networkAddress: "10.112.16.127", port: 502, deviceAddress: 3)       // testing with an SMA inverter right now (sunnyboy4)
-//            device = try ModbusDevice(networkAddress: "evcharger.jinx.eu", port: 502, deviceAddress: 180)       // testing with an Phoenix Charger
-            try await device.connect()
-            print("Connected")
+//        device = try ModbusDevice(networkAddress: "evcharger.jinx.eu", port: 502, deviceAddress: 180)       // testing with an Phoenix Charger
+        try await device.connect()
+        print("Connected")
     }
 
     override func tearDown() async throws {
@@ -88,6 +88,27 @@ final class SwiftLibModbusTests: XCTestCase {
         dockerTask?.waitUntilExit()
         try Process.run( URL(fileURLWithPath: "/usr/local/bin/docker"),arguments: ["stop","modbusserver"])
         sleep(1)
+    }
+
+
+
+    func testReadInputBits() async throws
+    {
+        print("testReadInputBits")
+
+        do
+        {
+            let values = try await device.readInputBitsFrom(startAddress: 8, count: 28)
+
+            print("values:\(values) ")
+            XCTAssert( values.count == 28 )
+            XCTAssert( values == [false, true, false, true, true, false, false, false, false, false, false, true, false, false, false, false, false, false, false, false, false, false, false, false, false, true, true, false])
+        }
+        catch
+        {
+            print("Error \(error)")
+            XCTFail()
+        }
     }
 
     func testReadGridFrequency() async throws

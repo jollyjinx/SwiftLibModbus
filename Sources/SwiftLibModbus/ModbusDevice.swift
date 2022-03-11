@@ -67,16 +67,17 @@ actor ModbusDevice
     }
 
 
-    func readInputBitsFrom(startAddress: Int32, count: Int32) async throws -> [UInt8]
+    func readInputBitsFrom(startAddress: Int32, count: Int32) async throws -> [Bool]
     {
         return try await withCheckedThrowingContinuation
         {   continuation in
 
-            let returnArray =  UnsafeMutablePointer<UInt8>.allocate(capacity: Int(count))
+            let returnArray =  UnsafeMutablePointer<Bool>.allocate(capacity: Int(count))
 
             if modbus_read_input_bits(self.modbusdevice, startAddress, count, returnArray) >= 0
             {
                 let intArray = Array(UnsafeBufferPointer(start: returnArray, count: Int(count)))
+
                 continuation.resume(returning: intArray)
             }
             else

@@ -16,9 +16,29 @@
   "description": "initial values for the register types",
   "zeroMode": false,
   "initializeUndefinedRegisters": true,
-  "discreteInput": {},
+  "discreteInput": {
+
+    "8" : "0x1",
+    "9" : "0x0",
+    "10": "0x1",
+    "11": "0x0",
+    "12": "0x1",
+    "13": "0x1",
+    "14": "0x0",
+    "20": "0x1",
+    "34": "0x1",
+    "35": "0x1",
+    "36": "0x0",
+
+    "37": "0x1",
+    "38": "0x1",
+    "39": "0x1",
+    "40": "0x1"
+
+  },
   "coils": {},
   "holdingRegister": {
+
     "108" : "0xaabb",
     "109" : "0xccdd",
 
