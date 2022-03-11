@@ -29,9 +29,12 @@ let package = Package(
         .target(name: "CModbus"),
         .target(
             name: "SwiftLibModbus",
-            dependencies: ["CModbus"]),
+            dependencies: ["CModbus"]
+            ),
         .testTarget(
             name: "SwiftLibModbusTests",
-            dependencies: ["SwiftLibModbus"]),
+            dependencies: ["SwiftLibModbus"],
+            resources: [ .copy("server_config.json") ]
+            )
     ]
 )

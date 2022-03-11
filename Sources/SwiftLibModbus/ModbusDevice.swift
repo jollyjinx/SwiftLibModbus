@@ -12,69 +12,36 @@ enum ModbusError: Error {
     case couldNotCreateDevice(error:String)
     case couldNotConnect(error:String)
 }
-
-import Foundation.NSDate // for TimeInterval
-
-// https://forums.swift.org/t/running-an-async-task-with-a-timeout/49733/12
-struct TimedOutError: Error, Equatable {}
-
-///
-/// Execute an operation in the current task subject to a timeout.
-///
-/// - Parameters:
-///   - seconds: The duration in seconds `operation` is allowed to run before timing out.
-///   - operation: The async operation to perform.
-/// - Returns: Returns the result of `operation` if it completed in time.
-/// - Throws: Throws ``TimedOutError`` if the timeout expires before `operation` completes.
-///   If `operation` throws an error before the timeout expires, that error is propagated to the caller.
-
-public func withTimeout<R>(
-    seconds: TimeInterval,
-    operation: @escaping @Sendable () async throws -> R
-) async throws -> R {
-    return try await withThrowingTaskGroup(of: R.self) { group in
-        let deadline = Date(timeIntervalSinceNow: seconds)
-
-        // Start actual work.
-        group.addTask {
-            return try await operation()
-        }
-        // Start timeout child task.
-        group.addTask {
-            let interval = deadline.timeIntervalSinceNow
-            if interval > 0 {
-                try await Task.sleep(nanoseconds: UInt64(interval * Double(NSEC_PER_SEC)))
-            }
-            try Task.checkCancellation()
-            // We’ve reached the timeout.
-            throw TimedOutError()
-        }
-        // First finished child task wins, cancel the other task.
-        let result = try await group.next()!
-        group.cancelAll()
-        return result
-    }
-}
-
 actor ModbusDevice
 {
     let modbusdevice: OpaquePointer
 
-    init(ipAddress: NSString, port: Int32, device: Int32) throws
+    init(networkAddress: String, port: Int32, deviceAddress: Int32) throws
     {
-        guard let modbusdevice = modbus_new_tcp(ipAddress.cString(using: String.Encoding.ascii.rawValue) , port)
+        let host = Host.init(name: networkAddress)
+        let ipAddresses = host.addresses
+
+        guard ipAddresses.count > 0
         else
         {
-            let errorString = String(cString:modbus_strerror(errno))
-            throw ModbusError.couldNotCreateDevice(error:errorString)
+            throw ModbusError.couldNotCreateDevice(error:"No Addresses for Name\(networkAddress) found")
         }
 
-        self.modbusdevice = modbusdevice
+        for ipAddress in ipAddresses
+        {
+            if let device = modbus_new_tcp(ipAddress.cString(using: String.Encoding.ascii) , port)
+            {
+                self.modbusdevice = device
+                let modbusErrorRecoveryMode = modbus_error_recovery_mode(rawValue: MODBUS_ERROR_RECOVERY_LINK.rawValue | MODBUS_ERROR_RECOVERY_PROTOCOL.rawValue)
 
-        let modbusErrorRecoveryMode = modbus_error_recovery_mode(rawValue: MODBUS_ERROR_RECOVERY_LINK.rawValue | MODBUS_ERROR_RECOVERY_PROTOCOL.rawValue)
+                modbus_set_error_recovery(modbusdevice, modbusErrorRecoveryMode)
+                modbus_set_slave(modbusdevice, deviceAddress)
+                return
+            }
+        }
 
-        modbus_set_error_recovery(modbusdevice, modbusErrorRecoveryMode)
-        modbus_set_slave(modbusdevice, device)
+        let errorString = String(cString:modbus_strerror(errno))
+        throw ModbusError.couldNotCreateDevice(error:errorString)
     }
 
 
@@ -120,74 +87,57 @@ actor ModbusDevice
         }
     }
 
+    private enum ModbusRegisterType
+    {
+        case holding
+        case input
+    }
+
     func readInputRegisters<T:FixedWidthInteger>(from startAddress: Int, count: Int) async throws -> [T]
     {
-        return try await withCheckedThrowingContinuation
-        {   continuation in
+        return try await readRegisters(from:startAddress, count: count, type: .input) as [T]
+    }
 
-            let wordWidth = (T.bitWidth + 15) / 16
-            let wordCount = count * wordWidth
-            let byteCount = wordCount * 2
-            print("Bytecount:\(byteCount) , wordCount:\(wordCount) wordWidth:\(wordWidth)")
-            let rawPointer = UnsafeMutableRawPointer.allocate(byteCount: byteCount,alignment: 8)
-            defer {
-              rawPointer.deallocate()
-            }
-            let typedPointer = rawPointer.bindMemory(to: UInt16.self, capacity: wordCount)
-            typedPointer.initialize(repeating: 0, count: count)
+    func readHoldingRegisters<T:FixedWidthInteger>(from startAddress: Int, count: Int) async throws -> [T]
+    {
+        return try await readRegisters(from:startAddress, count: count, type: .holding) as [T]
+    }
 
-            if modbus_read_input_registers(modbusdevice, Int32(startAddress), Int32(wordCount), typedPointer ) >= 0
-            {
-                let readPointer = rawPointer.bindMemory(to: UInt16.self, capacity: wordCount)
-                let valueArray = UnsafeMutableBufferPointer<UInt16>(start: readPointer, count: wordCount)
 
-                for i in 0..<valueArray.count {
-                    valueArray[i] = valueArray[i].bigEndian
-                }
-
-                let returnPointer = rawPointer.bindMemory(to: T.self, capacity: count)
-                let returnArray:[T] = Array(UnsafeBufferPointer(start: returnPointer, count: count))
-                let correctEndian = returnArray.map { $0.bigEndian }
-                continuation.resume(returning: correctEndian )
-            }
-            else
-            {
-                let errorString = String(cString:modbus_strerror(errno))
-                continuation.resume(throwing: ModbusError.couldNotConnect(error:errorString))
-            }
+    private func convertBigEndian<T:FixedWidthInteger>(typedPointer:UnsafeMutablePointer<T>,count:Int)
+    {
+        for i in 0..<count {
+            typedPointer[i] = typedPointer[i].bigEndian
         }
     }
 
 
-    func readRegisters<T:FixedWidthInteger>(from startAddress: Int, count: Int) async throws -> [T]
+    private func readRegisters<T:FixedWidthInteger>(from startAddress: Int, count: Int,type: ModbusRegisterType) async throws -> [T]
     {
         return try await withCheckedThrowingContinuation
         {   continuation in
 
-            let wordWidth = (T.bitWidth + 15) / 16
-            let wordCount = count * wordWidth
-            let byteCount = wordCount * 2
-            print("Bytecount:\(byteCount) , wordCount:\(wordCount) wordWidth:\(wordWidth)")
-            let rawPointer = UnsafeMutableRawPointer.allocate(byteCount: byteCount,alignment: 8)
-            defer {
-              rawPointer.deallocate()
-            }
-            let typedPointer = rawPointer.bindMemory(to: UInt16.self, capacity: wordCount)
-            typedPointer.initialize(repeating: 0, count: count)
+            let wordCount       = ((T.bitWidth * count) + 15 ) / 16
+            let byteCount       = wordCount * 2
+            let rawPointer      = UnsafeMutableRawPointer.allocate(byteCount: byteCount,alignment:8); defer { rawPointer.deallocate() }
+            let uint16Pointer   = rawPointer.bindMemory(to: UInt16.self, capacity: wordCount)
+                uint16Pointer.initialize(repeating: 0, count: wordCount)
 
-            if modbus_read_registers(modbusdevice, Int32(startAddress), Int32(wordCount), typedPointer ) >= 0
+            let modbusfunction = type == .input ? modbus_read_input_registers : modbus_read_registers
+
+            if modbusfunction(modbusdevice, Int32(startAddress), Int32(wordCount), uint16Pointer ) >= 0
             {
-                let readPointer = rawPointer.bindMemory(to: UInt16.self, capacity: wordCount)
-                let valueArray = UnsafeMutableBufferPointer<UInt16>(start: readPointer, count: wordCount)
+                let returnPointer = rawPointer.bindMemory(to: T.self, capacity: count)
 
-                for i in 0..<valueArray.count {
-                    valueArray[i] = valueArray[i].bigEndian
+                if T.bitWidth != 16
+                {
+                    convertBigEndian(typedPointer:uint16Pointer, count:wordCount)
+                    convertBigEndian(typedPointer:returnPointer, count:count)
                 }
 
-                let returnPointer = rawPointer.bindMemory(to: T.self, capacity: count)
                 let returnArray:[T] = Array(UnsafeBufferPointer(start: returnPointer, count: count))
-                let correctEndian = returnArray.map { $0.bigEndian }
-                continuation.resume(returning: correctEndian )
+
+                continuation.resume(returning: returnArray )
             }
             else
             {
@@ -197,17 +147,34 @@ actor ModbusDevice
         }
     }
 
-    func writeRegisters(startAddress: Int32, count: Int32) async throws -> [UInt16]
+
+
+    func writeRegisters<T:FixedWidthInteger>(to startAddress: Int, arrayToWrite : [T]) async throws
     {
+        guard arrayToWrite.count > 0 else { return }
+        
         return try await withCheckedThrowingContinuation
         {   continuation in
 
-            let returnArray =  UnsafeMutablePointer<UInt16>.allocate(capacity: Int(count))
+            let wordCount       = ((T.bitWidth * arrayToWrite.count) + 15 ) / 16
+            let byteCount       = wordCount * 2
 
-            if modbus_read_registers(modbusdevice, startAddress, count, returnArray) >= 0
+            let rawPointer      = UnsafeMutableRawPointer.allocate(byteCount: byteCount,alignment:8); defer { rawPointer.deallocate() }
+            let uint16Pointer   = rawPointer.bindMemory(to: UInt16.self, capacity: wordCount)
+
+            let cleanLast       = UnsafeMutableBufferPointer(start: uint16Pointer, count: wordCount)
+            cleanLast[wordCount - 1] = 0x0000
+            rawPointer.copyMemory(from: arrayToWrite, byteCount: arrayToWrite.count * MemoryLayout<T>.size)
+
+            if T.bitWidth != 16
             {
-                let intArray = Array(UnsafeBufferPointer(start: returnArray, count: Int(count)))
-                continuation.resume(returning: intArray)
+                convertBigEndian(typedPointer:rawPointer.bindMemory(to: T.self, capacity: arrayToWrite.count), count:arrayToWrite.count)
+                convertBigEndian(typedPointer:uint16Pointer, count:wordCount)
+            }
+
+            if modbus_write_registers(modbusdevice, Int32(startAddress), Int32(wordCount), uint16Pointer) >= 0
+            {
+                continuation.resume()
             }
             else
             {
@@ -216,6 +183,7 @@ actor ModbusDevice
             }
         }
     }
+
 //    func writeRegistersFromAndOn(address: Int32, numberArray: NSArray, success: @escaping () -> Void, failure: @escaping (NSError) -> Void) {
 //        modbusQueue.async {
 //            let valueArray: UnsafeMutablePointer<UInt16> = UnsafeMutablePointer<UInt16>.allocate(capacity: numberArray.count)
