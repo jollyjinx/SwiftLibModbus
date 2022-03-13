@@ -111,6 +111,41 @@ final class SwiftLibModbusTests: XCTestCase {
         }
     }
 
+
+    func testReadInputCoils() async throws
+    {
+        print("testReadInputCoils")
+
+        do
+        {
+            let values = try await device.readInputCoilsFrom(startAddress: 400, count: 4)
+
+            print("values:\(values) ")
+            XCTAssert( values.count == 4 )
+            XCTAssert( values == [true, false, false, true] )
+        }
+        catch
+        {
+            print("Error \(error)")
+            XCTFail()
+        }
+    }
+
+    func testWriteInputCoil() async throws
+    {
+        for address in [400,401,402,400,403]
+        {
+            for value in [true,false,false,false,true,false,true,false]
+            {
+                try await device.writeInputCoil(startAddress: address, value: value)
+                let read = try await device.readInputCoilsFrom(startAddress: address, count: 4)
+                XCTAssert(value == read.first)
+            }
+        }
+    }
+
+
+
     func testReadGridFrequency() async throws
     {
         print("testReadGridFrequency")
@@ -199,7 +234,7 @@ final class SwiftLibModbusTests: XCTestCase {
 
         do
         {
-            let string = try await device.readASCIIString(from: 1310, count: 10)
+            let string = try await device.readASCIIString(from: 1310, count: 10,type:.holding)
             XCTAssert(string == "charger")
         }
         catch
@@ -217,7 +252,7 @@ final class SwiftLibModbusTests: XCTestCase {
             for stringToWrite in ["evchar","EvChar"]
             {
                 try await device.writeASCIIString(start:310, count: 10, string: stringToWrite)
-                let readSting = try await device.readASCIIString(from: 310, count: 10)
+                let readSting = try await device.readASCIIString(from: 310, count: 10,type:.holding)
 
                 XCTAssert(readSting == stringToWrite )
             }

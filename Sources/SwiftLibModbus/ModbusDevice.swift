@@ -8,15 +8,31 @@
 import Foundation
 import CModbus
 
-enum ModbusError: Error {
+public enum ModbusError: Error {
     case couldNotCreateDevice(error:String)
     case couldNotConnect(error:String)
+    case couldNotRead(error:String)
+    case couldNotWrite(error:String)
 }
-actor ModbusDevice
+
+public enum ModbusRegisterType:String,Encodable,Decodable
+{
+    case coil
+    case discrete
+    case holding
+    case input
+}
+public enum ModbusDeviceEndianness:String,Encodable,Decodable
+{
+    case bigEndian
+    case littleEndian
+}
+
+public actor ModbusDevice
 {
     let modbusdevice: OpaquePointer
 
-    init(networkAddress: String, port: Int32, deviceAddress: Int32) throws
+    public init(networkAddress: String, port: UInt16, deviceAddress: UInt16) throws
     {
         let host = Host.init(name: networkAddress)
         let ipAddresses = host.addresses
@@ -24,28 +40,28 @@ actor ModbusDevice
         guard ipAddresses.count > 0
         else
         {
-            throw ModbusError.couldNotCreateDevice(error:"No Addresses for Name\(networkAddress) found")
+            throw ModbusError.couldNotCreateDevice(error:"No Addresses for Name:\(networkAddress) found.")
         }
 
         for ipAddress in ipAddresses
         {
-            if let device = modbus_new_tcp(ipAddress.cString(using: String.Encoding.ascii) , port)
+            if let device = modbus_new_tcp(ipAddress.cString(using: String.Encoding.ascii) , Int32(port) )
             {
                 self.modbusdevice = device
                 let modbusErrorRecoveryMode = modbus_error_recovery_mode(rawValue: MODBUS_ERROR_RECOVERY_LINK.rawValue | MODBUS_ERROR_RECOVERY_PROTOCOL.rawValue)
 
                 modbus_set_error_recovery(modbusdevice, modbusErrorRecoveryMode)
-                modbus_set_slave(modbusdevice, deviceAddress)
+                modbus_set_slave(modbusdevice, Int32(deviceAddress) )
                 return
             }
         }
 
         let errorString = String(cString:modbus_strerror(errno))
-        throw ModbusError.couldNotCreateDevice(error:errorString)
+        throw ModbusError.couldNotCreateDevice(error:"could not create device:\(errorString) ipAddresses:\(ipAddresses)")
     }
 
 
-    func connect() async throws
+    public func connect() async throws
     {
         return try await withCheckedThrowingContinuation
         {
@@ -62,65 +78,110 @@ actor ModbusDevice
             }
         }
     }
-    func disconnect() {
+    public func disconnect() {
         modbus_close(modbusdevice)
     }
 
+    public func readInputBitsFrom(startAddress: Int,count: Int,type:ModbusRegisterType) async throws -> [Bool]
+    {
+        switch type
+        {
+            case .coil:      return try await readInputCoilsFrom(startAddress:startAddress,count: count)
+            case .discrete:  return try await readInputBitsFrom(startAddress: startAddress, count: count)
+            case .holding:   throw ModbusError.couldNotRead(error: "read holding for bits not supported")
+            case .input:     throw ModbusError.couldNotRead(error: "read holding for bits not supported")
+        }
+    }
 
-    func readInputBitsFrom(startAddress: Int32, count: Int32) async throws -> [Bool]
+
+    public func readInputCoilsFrom(startAddress: Int, count: Int) async throws -> [Bool]
     {
         return try await withCheckedThrowingContinuation
         {   continuation in
 
             let returnArray =  UnsafeMutablePointer<Bool>.allocate(capacity: Int(count))
 
-            if modbus_read_input_bits(self.modbusdevice, startAddress, count, returnArray) >= 0
+            if modbus_read_bits(self.modbusdevice, Int32(startAddress), Int32(count), returnArray) >= 0
             {
-                let intArray = Array(UnsafeBufferPointer(start: returnArray, count: Int(count)))
+                let boolArray = Array(UnsafeBufferPointer(start: returnArray, count: Int(count)))
 
-                continuation.resume(returning: intArray)
+                continuation.resume(returning: boolArray)
             }
             else
             {
                 let errorString = String(cString:modbus_strerror(errno))
-                continuation.resume(throwing: ModbusError.couldNotConnect(error:errorString))
+                continuation.resume(throwing: ModbusError.couldNotRead(error:errorString))
             }
         }
     }
 
-    private enum ModbusRegisterType
+    public func writeInputCoil(startAddress: Int, value:Bool) async throws
     {
-        case holding
-        case input
+        return try await withCheckedThrowingContinuation
+        {   continuation in
+
+            if modbus_write_bit(self.modbusdevice, Int32(startAddress), value ? 1 : 0 ) >= 0
+            {
+                continuation.resume()
+            }
+            else
+            {
+                let errorString = String(cString:modbus_strerror(errno))
+                continuation.resume(throwing: ModbusError.couldNotRead(error:errorString))
+            }
+        }
     }
 
-    func readInputRegisters<T:FixedWidthInteger>(from startAddress: Int, count: Int) async throws -> [T]
+
+    public func readInputBitsFrom(startAddress: Int, count: Int) async throws -> [Bool]
     {
-        return try await readRegisters(from:startAddress, count: count, type: .input) as [T]
+        return try await withCheckedThrowingContinuation
+        {   continuation in
+
+            let returnArray =  UnsafeMutablePointer<Bool>.allocate(capacity: Int(count))
+
+            if modbus_read_input_bits(self.modbusdevice, Int32(startAddress), Int32(count), returnArray) >= 0
+            {
+                let boolArray = Array(UnsafeBufferPointer(start: returnArray, count: Int(count)))
+
+                continuation.resume(returning: boolArray)
+            }
+            else
+            {
+                let errorString = String(cString:modbus_strerror(errno))
+                continuation.resume(throwing: ModbusError.couldNotRead(error:errorString))
+            }
+        }
     }
 
-    func readHoldingRegisters<T:FixedWidthInteger>(from startAddress: Int, count: Int) async throws -> [T]
+
+    public func readInputRegisters<T:FixedWidthInteger>(from startAddress: Int, count: Int,endianness:ModbusDeviceEndianness = .bigEndian) async throws -> [T]
     {
-        return try await readRegisters(from:startAddress, count: count, type: .holding) as [T]
+        return try await readRegisters(from:startAddress, count: count, type: .input,endianness:endianness) as [T]
     }
 
-    func readASCIIString(from:Int,count:Int) async throws -> String
+    public func readHoldingRegisters<T:FixedWidthInteger>(from startAddress: Int, count: Int,endianness:ModbusDeviceEndianness = .bigEndian) async throws -> [T]
     {
-        let values:[UInt8] = try await readHoldingRegisters(from: from, count: count)
+        return try await readRegisters(from:startAddress, count: count, type: .holding,endianness:endianness) as [T]
+    }
+
+    public func readASCIIString(from:Int,count:Int,type:ModbusRegisterType,endianness:ModbusDeviceEndianness = .bigEndian) async throws -> String
+    {
+        let values:[UInt8] = try await readRegisters(from: from, count: count,type: type,endianness:endianness)
 
         let validCharacters = values[0..<(values.firstIndex(where: { $0 == 0 }) ?? values.count)]
         let string = String(validCharacters.map{ Character(UnicodeScalar($0)) })
         return string
     }
 
-    func writeASCIIString(start:Int,count:Int,string:String) async throws
+    public func writeASCIIString(start:Int,count:Int,string:String,endianness:ModbusDeviceEndianness = .bigEndian) async throws
     {
         var values  = [UInt8](repeating: 0, count: count)
         for (index,character) in string.enumerated()
         {
             values[index] = character.asciiValue ?? 0
         }
-        try await writeRegisters(to: start, arrayToWrite:values)
+        try await writeRegisters(to: start, arrayToWrite:values,endianness:endianness)
     }
 
 
@@ -135,7 +196,7 @@ actor ModbusDevice
     }
 
 
-    private func readRegisters<T:FixedWidthInteger>(from startAddress: Int, count: Int,type: ModbusRegisterType) async throws -> [T]
+    public func readRegisters<T:FixedWidthInteger>(from startAddress: Int, count: Int,type: ModbusRegisterType,endianness:ModbusDeviceEndianness = .bigEndian) async throws -> [T]
     {
         return try await withCheckedThrowingContinuation
         {   continuation in
@@ -152,7 +213,7 @@ actor ModbusDevice
             {
                 let returnPointer = rawPointer.bindMemory(to: T.self, capacity: count)
 
-                if T.bitWidth != 16
+                if endianness == .bigEndian
                 {
                     convertBigEndian(typedPointer:uint16Pointer, count:wordCount)
                     convertBigEndian(typedPointer:returnPointer, count:count)
@@ -165,14 +226,14 @@ actor ModbusDevice
             else
             {
                 let errorString = String(cString:modbus_strerror(errno))
-                continuation.resume(throwing: ModbusError.couldNotConnect(error:errorString))
+                continuation.resume(throwing: ModbusError.couldNotRead(error:errorString))
             }
         }
     }
 
 
 
-    func writeRegisters<T:FixedWidthInteger>(to startAddress: Int, arrayToWrite : [T]) async throws
+    public func writeRegisters<T:FixedWidthInteger>(to startAddress: Int, arrayToWrite : [T],endianness:ModbusDeviceEndianness = .bigEndian) async throws
     {
         guard arrayToWrite.count > 0 else { return }
         
@@ -189,7 +250,7 @@ actor ModbusDevice
             cleanLast[wordCount - 1] = 0x0000
             rawPointer.copyMemory(from: arrayToWrite, byteCount: arrayToWrite.count * MemoryLayout<T>.size)
 
-            if T.bitWidth != 16
+            if endianness == .bigEndian
             {
                 convertBigEndian(typedPointer:rawPointer.bindMemory(to: T.self, capacity: arrayToWrite.count), count:arrayToWrite.count)
                 convertBigEndian(typedPointer:uint16Pointer, count:wordCount)
@@ -202,45 +263,10 @@ actor ModbusDevice
             else
             {
                 let errorString = String(cString:modbus_strerror(errno))
-                continuation.resume(throwing: ModbusError.couldNotConnect(error:errorString))
+                continuation.resume(throwing: ModbusError.couldNotWrite(error:errorString))
             }
         }
     }
-
-//    func writeRegistersFromAndOn(address: Int32, numberArray: NSArray, success: @escaping () -> Void, failure: @escaping (NSError) -> Void) {
-//        modbusQueue.async {
-//            let valueArray: UnsafeMutablePointer<UInt16> = UnsafeMutablePointer<UInt16>.allocate(capacity: numberArray.count)
-//            for i in 0..<numberArray.count {
-//                valueArray[i] = UInt16(numberArray[i] as! Int)
-//            }
-//
-//            if modbus_write_registers(self.mb!, address, Int32(numberArray.count), valueArray) >= 0 {
-//                DispatchQueue.main.async {
-//                    success()
-//                }
-//            } else {
-//                let error = self.buildNSError(errno: errno)
-//                DispatchQueue.main.async {
-//                    failure(error)
-//                }
-//            }
-//        }
-//    }
-//
-//    func writeRegister(address: Int32, value: Int32, success: @escaping () -> Void, failure: @escaping (NSError) -> Void) {
-//        modbusQueue.async {
-//            if modbus_write_register(self.mb!, address, value) >= 0 {
-//                DispatchQueue.main.async {
-//                    success()
-//                }
-//            } else {
-//                let error = self.buildNSError(errno: errno)
-//                DispatchQueue.main.async {
-//                    failure(error)
-//                }
-//            }
-//        }
-//    }
 
 }
 
