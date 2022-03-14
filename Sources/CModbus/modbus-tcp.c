@@ -47,6 +47,11 @@
 # include <netinet/in_systm.h>
 #endif
 
+#ifndef strlcpy
+#include "strlcpy.h"
+#endif
+
+
 # include <netinet/in.h>
 # include <netinet/ip.h>
 # include <netinet/tcp.h>

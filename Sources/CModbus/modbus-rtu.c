@@ -22,6 +22,11 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <string.h>
+
+#ifndef strlcpy
+#include "strlcpy.h"
+#endif
+
 #ifndef _MSC_VER
 #include <unistd.h>
 #endif
