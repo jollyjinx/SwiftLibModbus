@@ -8,6 +8,11 @@
 import Foundation
 import CModbus
 
+#if !NSEC_PER_SEC
+let NSEC_PER_SEC = 1_000_000_000
+#endif
+
+
 public enum ModbusError: Error {
     case couldNotCreateDevice(error:String)
     case couldNotConnect(error:String)
