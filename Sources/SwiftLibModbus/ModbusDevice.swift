@@ -15,14 +15,14 @@ public enum ModbusError: Error {
     case couldNotWrite(error:String)
 }
 
-public enum ModbusRegisterType:String,Encodable,Decodable
+public enum ModbusRegisterType:String,Encodable,Decodable,Sendable
 {
     case coil
     case discrete
     case holding
     case input
 }
-public enum ModbusDeviceEndianness:String,Encodable,Decodable
+public enum ModbusDeviceEndianness:String,Encodable,Decodable,Sendable
 {
     case bigEndian
     case littleEndian
@@ -31,9 +31,16 @@ public enum ModbusDeviceEndianness:String,Encodable,Decodable
 public actor ModbusDevice
 {
     let modbusdevice: OpaquePointer
+    let autoReconnectAfter:TimeInterval         // SMA servers tend to hang when a connection is too long
+    let disconnectWhenIdleAfter:TimeInterval    // SMA servers have a problem when tcp connection is not used and keep it internally forever
 
-    public init(networkAddress: String, port: UInt16, deviceAddress: UInt16) throws
+    var connected = false
+
+    public init(networkAddress: String, port: UInt16, deviceAddress: UInt16,autoReconnectAfter:TimeInterval = 3600.0,disconnectWhenIdleAfter:TimeInterval = 0.2) throws
     {
+        self.autoReconnectAfter      = autoReconnectAfter
+        self.disconnectWhenIdleAfter = disconnectWhenIdleAfter
+
         let host = Host.init(name: networkAddress)
         let ipAddresses = host.addresses
 
@@ -74,16 +81,64 @@ public actor ModbusDevice
             }
             else
             {
+                startAutoReconnectTimer()
+                startDisconnectWhenIdleTimer()
+                connected = true
                 continuation.resume()
             }
         }
     }
+
     public func disconnect() {
+        guard connected else { return }
+
         modbus_close(modbusdevice)
+        connected = false
+        _autoReconnectTask?.cancel()
+        _disconnectWhenIdleTask?.cancel()
     }
+
+    private func connectWhenNeeded() async throws
+   {
+        guard !connected else { return }
+
+        try await connect()
+    }
+
+
+    var _autoReconnectTask:Task<(),Error>?
+
+    private func startAutoReconnectTimer()
+    {
+        guard autoReconnectAfter > 0 else { return }
+
+        _autoReconnectTask?.cancel()
+        _autoReconnectTask = Task {
+                                        try await Task.sleep(nanoseconds: UInt64( autoReconnectAfter * Double(NSEC_PER_SEC) ))
+                                        self.disconnect()
+                                    }
+    }
+
+    var _disconnectWhenIdleTask:Task<(),Error>?
+
+    private func startDisconnectWhenIdleTimer()
+    {
+        guard disconnectWhenIdleAfter > 0 else { return }
+
+        _disconnectWhenIdleTask?.cancel()
+        _disconnectWhenIdleTask = Task {
+                                        try await Task.sleep(nanoseconds: UInt64( disconnectWhenIdleAfter * Double(NSEC_PER_SEC) ))
+                                        self.disconnect()
+                                    }
+    }
+
+
+
 
     public func readInputBitsFrom(startAddress: Int,count: Int,type:ModbusRegisterType) async throws -> [Bool]
     {
+        try await connectWhenNeeded(); defer { startDisconnectWhenIdleTimer() }
+
         switch type
         {
             case .coil:      return try await readInputCoilsFrom(startAddress:startAddress,count: count)
@@ -96,6 +151,8 @@ public actor ModbusDevice
 
     public func readInputCoilsFrom(startAddress: Int, count: Int) async throws -> [Bool]
     {
+        try await connectWhenNeeded(); defer { startDisconnectWhenIdleTimer() }
+
         return try await withCheckedThrowingContinuation
         {   continuation in
 
@@ -117,6 +174,8 @@ public actor ModbusDevice
 
     public func writeInputCoil(startAddress: Int, value:Bool) async throws
     {
+        try await connectWhenNeeded(); defer { startDisconnectWhenIdleTimer() }
+
         return try await withCheckedThrowingContinuation
         {   continuation in
 
@@ -135,6 +194,8 @@ public actor ModbusDevice
 
     public func readInputBitsFrom(startAddress: Int, count: Int) async throws -> [Bool]
     {
+        try await connectWhenNeeded(); defer { startDisconnectWhenIdleTimer() }
+
         return try await withCheckedThrowingContinuation
         {   continuation in
 
@@ -198,6 +259,8 @@ public actor ModbusDevice
 
     public func readRegisters<T:FixedWidthInteger>(from startAddress: Int, count: Int,type: ModbusRegisterType,endianness:ModbusDeviceEndianness = .bigEndian) async throws -> [T]
     {
+        try await connectWhenNeeded(); defer { startDisconnectWhenIdleTimer() }
+
         return try await withCheckedThrowingContinuation
         {   continuation in
 
@@ -235,8 +298,9 @@ public actor ModbusDevice
 
     public func writeRegisters<T:FixedWidthInteger>(to startAddress: Int, arrayToWrite : [T],endianness:ModbusDeviceEndianness = .bigEndian) async throws
     {
+        try await connectWhenNeeded(); defer { startDisconnectWhenIdleTimer() }
         guard arrayToWrite.count > 0 else { return }
-        
+
         return try await withCheckedThrowingContinuation
         {   continuation in
 
