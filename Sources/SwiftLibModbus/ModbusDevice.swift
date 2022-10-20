@@ -33,6 +33,22 @@ public enum ModbusDeviceEndianness:String,Encodable,Decodable,Sendable
     case littleEndian
 }
 
+public enum ModbusParity
+{
+    case none
+    case even
+    case odd
+
+    var value:UInt8 {   switch(self)
+                        {
+                            case .none: return Character("N").asciiValue!
+                            case .even: return Character("E").asciiValue!
+                            case .odd: return Character("O").asciiValue!
+                        }
+                    }
+}
+
+
 public actor ModbusDevice
 {
     let modbusdevice: OpaquePointer
@@ -41,7 +57,24 @@ public actor ModbusDevice
 
     var connected = false
 
-    public init(networkAddress: String, port: UInt16, deviceAddress: UInt16,autoReconnectAfter:TimeInterval = 3600.0,disconnectWhenIdleAfter:TimeInterval = 0.2) throws
+    public init(device:String,slaveid:Int = 1, baudRate:Int = 9600,dataBits:Int = 8, parity:ModbusParity = .none , stopBits:Int = 1,autoReconnectAfter:TimeInterval = 10.0 ,disconnectWhenIdleAfter:TimeInterval = 10.0) throws
+    {
+        guard let modbusdevice = modbus_new_rtu(device.cString(using: .utf8), Int32(baudRate), CChar(parity.value), Int32(dataBits), Int32(stopBits))
+        else
+        {
+            throw ModbusError.couldNotCreateDevice(error:"Could not create device:\(device) (\(baudRate)-\(parity)-\(stopBits))")
+        }
+        self.autoReconnectAfter      = autoReconnectAfter
+        self.disconnectWhenIdleAfter = disconnectWhenIdleAfter
+        self.modbusdevice = modbusdevice
+        self.connected = true
+
+        modbus_set_slave(modbusdevice, Int32(slaveid))
+        modbus_connect(self.modbusdevice)
+    }
+
+
+    public init(networkAddress: String, port: UInt16, deviceAddress: UInt16,autoReconnectAfter:TimeInterval = 3600.0,disconnectWhenIdleAfter:TimeInterval = 10.0) throws
     {
         self.autoReconnectAfter      = autoReconnectAfter
         self.disconnectWhenIdleAfter = disconnectWhenIdleAfter
