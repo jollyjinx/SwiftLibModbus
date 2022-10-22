@@ -1,332 +1,45 @@
 import XCTest
-@testable import SwiftLibModbus
+import SwiftLibModbus
 
-import Foundation.NSDate // for TimeInterval
-
-// https://forums.swift.org/t/running-an-async-task-with-a-timeout/49733/12
-struct TimedOutError: Error, Equatable {}
-
-///
-/// Execute an operation in the current task subject to a timeout.
-///
-/// - Parameters:
-///   - seconds: The duration in seconds `operation` is allowed to run before timing out.
-///   - operation: The async operation to perform.
-/// - Returns: Returns the result of `operation` if it completed in time.
-/// - Throws: Throws ``TimedOutError`` if the timeout expires before `operation` completes.
-///   If `operation` throws an error before the timeout expires, that error is propagated to the caller.
-
-public func withTimeout<R>(
-    seconds: TimeInterval,
-    operation: @escaping @Sendable () async throws -> R
-) async throws -> R {
-    return try await withThrowingTaskGroup(of: R.self) { group in
-        let deadline = Date(timeIntervalSinceNow: seconds)
-
-        // Start actual work.
-        group.addTask {
-            return try await operation()
-        }
-        // Start timeout child task.
-        group.addTask {
-            let interval = deadline.timeIntervalSinceNow
-            if interval > 0 {
-                try await Task.sleep(nanoseconds: UInt64(interval * Double(NSEC_PER_SEC)))
-            }
-            try Task.checkCancellation()
-            // We’ve reached the timeout.
-            throw TimedOutError()
-        }
-        // First finished child task wins, cancel the other task.
-        let result = try await group.next()!
-        group.cancelAll()
-        return result
-    }
-}
+final class modbus2mqttTests: XCTestCase {
+    func testReverseEngineerHM310T() async throws {
+        // Prints out modbus address ranges and compares them to the last time
 
 
-final class SwiftLibModbusTests: XCTestCase {
-    var device:ModbusDevice!
-    var dockerTask:Process?
+        let modbusDevice = try ModbusDevice(device: "/dev/tty.usbserial-42340",baudRate:9600)
+        let stripesize = 0x10
 
-    deinit
-    {
-        print("deinit")
-    }
+        var store = [Int:[UInt16]]()
+        let emptyline = [UInt16](repeating:0, count:stripesize)
 
-
-    override func setUp() async throws
-    {
-        print("setup")
-        try Process.run( URL(fileURLWithPath: "/usr/local/bin/docker"),arguments: ["stop","modbusserver"])
-        sleep(1)
-
-        guard let thisTestBundle = Bundle.allBundles.filter({ $0.bundlePath.hasSuffix(".xctest") }).first   else { print("no xctest bundle found"); return }
-        guard let resourceBundlePath = thisTestBundle.path(forResource:nil , ofType: "bundle")              else { print("no resourceBundlePath found"); return }
-        guard let resourceBundle = Bundle.init(path: resourceBundlePath)                                    else { print("no resourceBundle could be created"); return }
-        guard let serverConfigPath = resourceBundle.path(forResource: "server_config", ofType: "json")      else { print("no server config file found \(resourceBundle)"); return }
-
-        try Process.run( URL(fileURLWithPath: "/usr/local/bin/docker"),
-                         arguments:["run","--rm","--init","--name","modbusserver","--platform","linux/amd64","-p","5020:5020","-v",serverConfigPath+":/server_config.json","oitc/modbus-server:latest","-f/server_config.json"])
-        sleep(1)
-
-        device = try ModbusDevice(networkAddress: "127.0.0.1", port: 5020, deviceAddress: 180)       // testing with docker container
-
-//        device = try ModbusDevice(networkAddress: "10.112.16.107", port: 502, deviceAddress: 3)       // testing with an SMA inverter right now. (sunnyboy3)
-//        device = try ModbusDevice(networkAddress: "10.98.16.156", port: 502, deviceAddress: 180)       // testing with an Phoenix Charger
-//        device = try ModbusDevice(networkAddress: "10.112.16.127", port: 502, deviceAddress: 3)       // testing with an SMA inverter right now (sunnyboy4)
-//        device = try ModbusDevice(networkAddress: "evcharger.jinx.eu", port: 502, deviceAddress: 180)       // testing with an Phoenix Charger
-        try await device.connect()
-        print("Connected")
-    }
-
-    override func tearDown() async throws {
-        print("tearDown")
-        await device?.disconnect()
-        dockerTask?.interrupt()
-        dockerTask?.terminate()
-        dockerTask?.waitUntilExit()
-        try Process.run( URL(fileURLWithPath: "/usr/local/bin/docker"),arguments: ["stop","modbusserver"])
-        sleep(1)
-    }
-
-
-
-    func testReadInputBits() async throws
-    {
-        print("testReadInputBits")
-
-        do
+        func readData(from address:Int) async throws
         {
-            let values = try await device.readInputBitsFrom(startAddress: 8, count: 28)
+            let data:[UInt16] = try await modbusDevice.readRegisters(from: address, count: stripesize, type: .holding)
 
-            print("values:\(values) ")
-            XCTAssert( values.count == 28 )
-            XCTAssert( values == [false, true, false, true, true, false, false, false, false, false, false, true, false, false, false, false, false, false, false, false, false, false, false, false, false, true, true, false])
-        }
-        catch
-        {
-            print("Error \(error)")
-            XCTFail()
-        }
-    }
+            let previous:[UInt16] = store[address] ?? emptyline
 
-
-    func testReadInputCoils() async throws
-    {
-        print("testReadInputCoils")
-
-        do
-        {
-            let values = try await device.readInputCoilsFrom(startAddress: 400, count: 4)
-
-            print("values:\(values) ")
-            XCTAssert( values.count == 4 )
-            XCTAssert( values == [true, false, false, true] )
-        }
-        catch
-        {
-            print("Error \(error)")
-            XCTFail()
-        }
-    }
-
-    func testWriteInputCoil() async throws
-    {
-        for address in [400,401,402,400,403]
-        {
-            for value in [true,false,false,false,true,false,true,false]
+            if data != previous
             {
-                try await device.writeInputCoil(startAddress: address, value: value)
-                let read = try await device.readInputCoilsFrom(startAddress: address, count: 4)
-                XCTAssert(value == read.first)
+                print("\( String(format:"%04x", address) ): \( data.map{ $0 == 0 ? "  -   " : String(format:"%04x  ",$0) }.joined(separator:" ") ) ")
+                print("\( String(format:"%04x", address) ): \( data.map{ $0 == 0 ? "      " : String(format:"%05d ",$0)  }.joined(separator:" ") ) ")
+                print("")
+                store[address] = data
             }
         }
-    }
 
-
-
-    func testReadGridFrequency() async throws
-    {
-        print("testReadGridFrequency")
-
-        do
+        for address in stride(from: 0x000, to: 0xFFFF, by: stripesize)
         {
-            let values:[UInt32] = try await device.readHoldingRegisters(from: 30803, count: 1)
-            let frequency =  Decimal(values[0]) / 100
-            print("Frequency:\(frequency) Hz")
-            XCTAssert( frequency == 50.01 )
+            try await readData(from: address)
         }
-        catch
+
+        for _ in 0...20
         {
-            print("Error \(error)")
-            XCTFail()
-        }
-    }
+            print("WRAPAROUND")
 
-    func testReadDailyYield() async throws
-    {
-        print("daily yield")
-
-        do
-        {
-            let values8:[UInt8]     = try await device.readHoldingRegisters(from: 30516, count: 8)
-            let values16:[UInt16]   = try await device.readHoldingRegisters(from: 30516, count: 4)
-            let values32:[UInt32]   = try await device.readHoldingRegisters(from: 30516, count: 2)
-            let values64:[UInt64]   = try await device.readHoldingRegisters(from: 30516, count: 1)
-
-            print("values8:\(values8.map({ String(format: "0x%02x", $0) }).joined(separator: ","))")
-            print("values16:\(values16.map({ String(format: "0x%04x", $0) }).joined(separator: ","))")
-            print("values32:\(values32.map({ String(format: "0x%08x", $0) }).joined(separator: ","))")
-            print("values64:\(values64.map({ String(format: "0x%016x", $0) }).joined(separator: ","))")
-            let yield =  Decimal(values64[0]) / 1000
-            print("daily yield:\( yield ) kWh")
-            XCTAssert( yield == Decimal(37181234)/1000 )
-        }
-        catch
-        {
-            print("Error \(error)")
-            XCTFail()
-        }
-    }
-
-    func testReadWriteInts() async throws
-    {
-        print("testReadWriteInts()")
-
-        do
-        {
-            for value:UInt8 in 0...255
+            for address in store.keys
             {
-                try await device.writeRegisters(to: 30516, arrayToWrite: [value])
-                let read:[UInt8] = try await device.readHoldingRegisters(from: 30516, count: 1)
-                print("Testing :\(value) == \(read.first!)")
-                XCTAssert(read.first! == value)
+                try await readData(from: address)
             }
-            for value:UInt16 in [0x0000,0x0001,0x00F,0x0010,0x0011,0x00FF,0x0100,0x0101,0x0f00,0x0f01,0xf0ff,0xff00,0xfffe,0xffff]
-            {
-                try await device.writeRegisters(to: 30516, arrayToWrite: [value])
-                let read:[UInt16] = try await device.readHoldingRegisters(from: 30516, count: 1)
-                print("Testing :\(value) == \(read.first!)")
-                XCTAssert(read.first! == value)
-            }
-            for value:UInt32 in [0x0000,0x0001,0x00F,0x0010,0x0011,0x00FF,0x0100,0x0101,0x0f00,0x0f01,0xf0ff,0xff00,0xfffe,0xffff,
-                                 0x0001_0000,0x0001_0001,0x00F,0x0001_0010,0x0001_0011,0x0001_00FF,0x0001_0100,0x0001_0101,0x0001_0f00,0x0001_0f01,0x0001_f0ff,0xff00,0x0001_fffe,0xffff
-                                ]
-            {
-                try await device.writeRegisters(to: 30516, arrayToWrite: [value])
-                let read:[UInt32] = try await device.readHoldingRegisters(from: 30516, count: 1)
-                print("Testing :\(value) == \(read.first!)")
-                XCTAssert(read.first! == value)
-            }
-        }
-        catch
-        {
-            print("Error \(error)")
-            XCTFail()
         }
     }
-
-
-    func testReadName() async throws
-    {
-        print("testReadName()")
-
-        do
-        {
-            let string = try await device.readASCIIString(from: 1310, count: 10,type:.holding)
-            XCTAssert(string == "charger")
-        }
-        catch
-        {
-            XCTFail("Error \(error)")
-        }
-    }
-
-    func testWriteName() async throws
-    {
-        print("testWriteName()")
-
-        do
-        {
-            for stringToWrite in ["evchar","EvChar"]
-            {
-                try await device.writeASCIIString(start:310, count: 10, string: stringToWrite)
-                let readSting = try await device.readASCIIString(from: 310, count: 10,type:.holding)
-
-                XCTAssert(readSting == stringToWrite )
-            }
-
-        }
-        catch
-        {
-            XCTFail("Error \(error)")
-        }
-    }
-
-    func testReadBitfield() async throws
-    {
-        print("testReadBitfield()")
-
-        struct PhoenixErrorCodes: OptionSet {
-
-            enum ErrorCodes:String,CaseIterable
-            {
-                case cableReject13and20A
-                case cableReject13A
-                case invalidPPValue
-                case invalidCPValue
-                case statusF
-                case lockError
-                case unlockError
-                case lossLDduringLock
-                case powerOverload
-            }
-
-            let rawValue: UInt16
-            static let cableReject13and20A  = PhoenixErrorCodes(rawValue: 1 << 0)
-            static let cableReject13A       = PhoenixErrorCodes(rawValue: 1 << 1)
-            static let invalidPPValue       = PhoenixErrorCodes(rawValue: 1 << 2)
-            static let invalidCPValue       = PhoenixErrorCodes(rawValue: 1 << 3)
-            static let statusF              = PhoenixErrorCodes(rawValue: 1 << 4)
-            static let lockError            = PhoenixErrorCodes(rawValue: 1 << 5)
-            static let unlockError          = PhoenixErrorCodes(rawValue: 1 << 6)
-            static let lossLDduringLock     = PhoenixErrorCodes(rawValue: 1 << 7)
-            static let powerOverload        = PhoenixErrorCodes(rawValue: 1 << 8)
-
-            var description:String {
-                var options:[String] = []
-
-                var value = 1
-                for errorCode in ErrorCodes.allCases
-                {
-                    if self.rawValue & UInt16(value) != 0
-                    {
-                        options.append( errorCode.rawValue )
-                    }
-                    value <<= 1
-                }
-                return options.joined(separator: ",")
-            }
-        }
-
-        do
-        {
-            let values:[UInt16] = try await withTimeout(seconds: 2.0, operation: { let v:[UInt16] = try await self.device.readInputRegisters(from: 108, count: 1) ; return v }    )
-
-            let errorCodes = PhoenixErrorCodes(rawValue: values.first!)
-
-            print("errorCodes:\( errorCodes.description )")
-
-            XCTAssert(errorCodes.rawValue == 0x01FF)
-        }
-        catch
-        {
-            print("Error \(error)")
-            XCTFail()
-        }
-    }
-
-
-
 }
