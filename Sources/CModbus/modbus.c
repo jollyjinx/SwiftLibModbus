@@ -181,7 +181,7 @@ static int send_msg(modbus_t *ctx, uint8_t *msg, int msg_length)
     /* In recovery mode, the write command will be issued until to be
        successful! Disabled by default. */
     do {
-        rc = ctx->backend->send(ctx, msg, msg_length);
+        rc = (int) (ctx->backend->send(ctx, msg, msg_length) );
         if (rc == -1) {
             _error_print(ctx, NULL);
             if (ctx->error_recovery & MODBUS_ERROR_RECOVERY_LINK) {
@@ -381,7 +381,7 @@ int _modbus_receive_msg(modbus_t *ctx, uint8_t *msg, msg_type_t msg_type)
             return -1;
         }
 
-        rc = ctx->backend->recv(ctx, msg + msg_length, length_to_read);
+        rc = (int) (ctx->backend->recv(ctx, msg + msg_length, length_to_read));
         if (rc == 0) {
             errno = ECONNRESET;
             rc = -1;

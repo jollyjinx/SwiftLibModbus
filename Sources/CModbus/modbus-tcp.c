@@ -411,7 +411,7 @@ static int _modbus_tcp_flush(modbus_t *ctx)
         /* Extract the garbage from the socket */
         char devnull[MODBUS_TCP_MAX_ADU_LENGTH];
 #ifndef OS_WIN32
-        rc = recv(ctx->s, devnull, MODBUS_TCP_MAX_ADU_LENGTH, MSG_DONTWAIT);
+        rc = (int) ( recv(ctx->s, devnull, MODBUS_TCP_MAX_ADU_LENGTH, MSG_DONTWAIT)) ;
 #else
         /* On Win32, it's a bit more complicated to not wait */
         fd_set rset;
