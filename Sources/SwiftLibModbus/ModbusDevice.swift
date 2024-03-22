@@ -33,7 +33,7 @@ public enum ModbusDeviceEndianness:String,Encodable,Decodable,Sendable
     case littleEndian
 }
 
-public enum ModbusParity
+public enum ModbusParity : Sendable
 {
     case none
     case even
