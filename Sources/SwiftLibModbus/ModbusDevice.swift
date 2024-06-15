@@ -79,7 +79,7 @@ public actor ModbusDevice
         self.autoReconnectAfter      = autoReconnectAfter
         self.disconnectWhenIdleAfter = disconnectWhenIdleAfter
 
-        let host = Host.init(name: networkAddress)
+        let host = Host(name: networkAddress)
         let ipAddresses = host.addresses
 
         guard ipAddresses.count > 0
