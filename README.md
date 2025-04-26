@@ -2,7 +2,7 @@
 
 ## Version 2 (Swift Concurrency)
 
-Version 2 has been developed by @jollyjinx for Swift Concurrency Support and is being used by https://github.com/jollyjinx/swift-modbus-2-mqtt-bridge
+Version 2 has been developed by @jollyjinx for Swift Concurrency Support and is being used by [modbus2mqtt bridge](https://github.com/jollyjinx/swift-modbus-2-mqtt-bridge)
 
 Example usage:
 ```
@@ -13,6 +13,8 @@ let modbusDeviceB = try ModbusDevice(device: "/dev/tty.usbserial-42340",baudRate
 let data:[UInt16] = try await modbusDeviceA.readRegisters(from: 0x1000, count: 0x10, type: .holding)
 ```
 
-For example usage look at the modbus2mqtt bridge code.
+For example usage look at:
+- [modbus2mqtt bridge](https://github.com/jollyjinx/swift-modbus-2-mqtt-bridge)
 
-Be aware that this code is MIT Licenced, but the CModbus library is LGPL Licensed.
+
+Be aware that this code is MIT Licenced, but the underlying CModbus library is LGPL Licensed.
