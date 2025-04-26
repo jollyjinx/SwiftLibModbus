@@ -169,4 +169,4 @@ For more complete examples, see:
 
 ## License
 
-SwiftLibModbus is available under the MIT license. The underlying libmodbus C library is licensed under LGPL.
+SwiftLibModbus Version 2 has been developed by @jollyjinx for Swift Concurrency Support and is available under the MIT license. The underlying libmodbus C library is licensed under LGPL.
