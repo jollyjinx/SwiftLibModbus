@@ -49,7 +49,7 @@ struct deviceTests
         }
     }
 
-    @Test(.disabled("Only works when a Phoenix Contact device is attached"))
+    @Test//(.disabled("Only works when a Phoenix Contact device is attached"))
     func float32PhoenixController() async throws
     {
         let modbusDevice = try ModbusDevice(networkAddress: "10.98.16.12", port: 502, deviceAddress: 180)
@@ -69,8 +69,8 @@ struct deviceTests
 
             if data != previous
             {
-                print("\(String(format: "0x%04x | %05d", address, address)): \(data.map { $0 == 0 ? "  -   " : String(format: "%04x  ", $0) }.joined(separator: " ")) ")
-                print("\(String(format: "0x%04x | %05d", address, address)): \(data.map { $0 == 0 ? "      " : String(format: "%0f ", $0) }.joined(separator: " ")) ")
+                print("\(String(format: "0x%04x | %05d", address, address)): \(data.map { $0 == 0 ? "  -   " : String(format: "%08x  ", $0.bitPattern) }.joined(separator: " ")) ")
+                print("\(String(format: "0x%04x | %05d", address, address)): \(data.map { $0 == 0 ? "      " : String(format: "%.2f ", $0) }.joined(separator: " ")) ")
                 print("")
                 store[address] = data
             }
