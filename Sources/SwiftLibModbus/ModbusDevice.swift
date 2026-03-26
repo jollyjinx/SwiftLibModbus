@@ -52,12 +52,14 @@ public actor ModbusDevice
 {
     // Run the actor on a dedicated serial executor so blocking libmodbus calls
     // do not pin Swift's cooperative thread pool.
+#if canImport(Darwin)
     private let ioQueue = DispatchSerialQueue(label: "SwiftLibModbus.ModbusDevice")
 
     nonisolated public var unownedExecutor: UnownedSerialExecutor
     {
         ioQueue.asUnownedSerialExecutor()
     }
+#endif
 
     let modbusdevice: OpaquePointer
     let autoReconnectAfter: TimeInterval // SMA servers tend to hang when a connection is too long
