@@ -2,7 +2,7 @@
 
 SwiftLibModbus is a modern Swift wrapper around the libmodbus C library, providing a convenient, type-safe interface for communicating with Modbus devices using Swift Concurrency features.
 
-[![Swift](https://img.shields.io/badge/Swift-6.1-orange.svg)](https://swift.org)
+[![Swift](https://img.shields.io/badge/Swift-6.3-orange.svg)](https://swift.org)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 ## Overview
@@ -19,7 +19,7 @@ Key features:
 
 ## Requirements
 
-- Swift 6.1+
+- Swift 6.3+
 - iOS 18+ or macOS 15+
 
 ## Installation

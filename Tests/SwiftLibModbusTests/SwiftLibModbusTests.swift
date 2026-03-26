@@ -6,11 +6,10 @@ import SwiftLibModbus
 import Testing
 
 @Suite("Device Tests")
-
-struct deviceTests
+struct DeviceTests
 {
-    @Test(.disabled("Only works when attached"))
-    func testReverseEngineerHM310T() async throws
+    @Test("Reverse Engineer HM310T", .disabled("Only works when attached"))
+    func reverseEngineerHM310T() async throws
     {
         let modbusDevice = try ModbusDevice(device: "/dev/tty.usbserial-42340", baudRate: 9600)
         let stripesize = 0x10
@@ -49,7 +48,7 @@ struct deviceTests
         }
     }
 
-    @Test//(.disabled("Only works when a Phoenix Contact device is attached"))
+    @Test("Float32 Phoenix Controller", .disabled("Only works when a Phoenix Contact device is attached"))
     func float32PhoenixController() async throws
     {
         let modbusDevice = try ModbusDevice(networkAddress: "10.98.16.12", port: 502, deviceAddress: 180)
