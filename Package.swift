@@ -26,6 +26,6 @@ let package = Package(name: "SwiftLibModbus",
                                       .enableExperimentalFeature("StrictConcurrency"),
                                   ]),
                           .testTarget(name: "SwiftLibModbusTests",
-                                      dependencies: ["SwiftLibModbus"]),
+                                      dependencies: ["SwiftLibModbus", "CModbus"]),
                       ],
                       swiftLanguageModes: [.v6])

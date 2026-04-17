@@ -246,6 +246,15 @@ static int _connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen,
                     struct timeval *tv)
 {
     int rc;
+    struct timeval tv_copy;
+    struct timeval *tv_ptr = tv;
+
+    /* select(2) is allowed to mutate the timeout argument on return. Keep the
+       configured response timeout intact across reconnects by passing a copy. */
+    if (tv != NULL) {
+        tv_copy = *tv;
+        tv_ptr = &tv_copy;
+    }
 
     rc = connect(sockfd, addr, addrlen);
     if (rc == -1 && errno == EINPROGRESS) {
@@ -256,7 +265,7 @@ static int _connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen,
         /* Wait to be available in writing */
         FD_ZERO(&wset);
         FD_SET(sockfd, &wset);
-        rc = select(sockfd + 1, NULL, &wset, NULL, tv);
+        rc = select(sockfd + 1, NULL, &wset, NULL, tv_ptr);
         if (rc <= 0) {
             /* Timeout or fail */
             return -1;
