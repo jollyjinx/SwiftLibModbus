@@ -62,6 +62,7 @@ public actor ModbusDevice
 #endif
 
     let modbusdevice: OpaquePointer
+    let defaultDeviceAddress: UInt16
     let autoReconnectAfter: TimeInterval // SMA servers tend to hang when a connection is too long
     let disconnectWhenIdleAfter: TimeInterval // SMA servers have a problem when tcp connection is not used and keep it internally forever
 
@@ -69,6 +70,12 @@ public actor ModbusDevice
 
     public init(device: String, slaveid: Int = 1, baudRate: Int = 9600, dataBits: Int = 8, parity: ModbusParity = .none, stopBits: Int = 1, autoReconnectAfter: TimeInterval = 10.0, disconnectWhenIdleAfter: TimeInterval = 10.0) throws
     {
+        guard let deviceAddress = UInt16(exactly: slaveid), deviceAddress <= 247
+        else
+        {
+            throw ModbusError.couldNotCreateDevice(error: "Invalid Modbus device address: \(slaveid)")
+        }
+
         guard let modbusdevice = modbus_new_rtu(device.cString(using: .utf8), Int32(baudRate), CChar(parity.value), Int32(dataBits), Int32(stopBits))
         else
         {
@@ -77,16 +84,24 @@ public actor ModbusDevice
         self.autoReconnectAfter = autoReconnectAfter
         self.disconnectWhenIdleAfter = disconnectWhenIdleAfter
         self.modbusdevice = modbusdevice
+        defaultDeviceAddress = deviceAddress
         connected = true
 
-        modbus_set_slave(modbusdevice, Int32(slaveid))
+        modbus_set_slave(modbusdevice, Int32(deviceAddress))
         modbus_connect(self.modbusdevice)
     }
 
     public init(networkAddress: String, port: UInt16, deviceAddress: UInt16, autoReconnectAfter: TimeInterval = 3600.0, disconnectWhenIdleAfter: TimeInterval = 10.0) throws
     {
+        guard deviceAddress <= 247 || deviceAddress == 255
+        else
+        {
+            throw ModbusError.couldNotCreateDevice(error: "Invalid Modbus TCP device address: \(deviceAddress)")
+        }
+
         self.autoReconnectAfter = autoReconnectAfter
         self.disconnectWhenIdleAfter = disconnectWhenIdleAfter
+        defaultDeviceAddress = deviceAddress
 
         let host = Host(name: networkAddress)
         let ipAddresses = host.addresses
@@ -144,6 +159,16 @@ public actor ModbusDevice
         try await connect()
     }
 
+    private func selectDevice(address: UInt16) throws
+    {
+        guard modbus_set_slave(modbusdevice, Int32(address)) >= 0
+        else
+        {
+            let errorString = String(cString: modbus_strerror(errno))
+            throw ModbusError.couldNotConnect(error: "Could not select Modbus device address \(address): \(errorString)")
+        }
+    }
+
     var _autoReconnectTask: Task<Void, Error>?
 
     private func startAutoReconnectTimer()
@@ -174,10 +199,15 @@ public actor ModbusDevice
 
     public func readInputBitsFrom(startAddress: Int, count: Int, type: ModbusRegisterType) async throws -> [Bool]
     {
+        try await readInputBitsFrom(startAddress: startAddress, count: count, type: type, deviceAddress: defaultDeviceAddress)
+    }
+
+    public func readInputBitsFrom(startAddress: Int, count: Int, type: ModbusRegisterType, deviceAddress: UInt16) async throws -> [Bool]
+    {
         switch type
         {
-            case .coil: return try await readInputCoilsFrom(startAddress: startAddress, count: count)
-            case .discrete: return try await readInputBitsFrom(startAddress: startAddress, count: count)
+            case .coil: return try await readInputCoilsFrom(startAddress: startAddress, count: count, deviceAddress: deviceAddress)
+            case .discrete: return try await readInputBitsFrom(startAddress: startAddress, count: count, deviceAddress: deviceAddress)
             case .holding: throw ModbusError.couldNotRead(error: "read holding for bits not supported")
             case .input: throw ModbusError.couldNotRead(error: "read holding for bits not supported")
         }
@@ -185,7 +215,13 @@ public actor ModbusDevice
 
     public func readInputCoilsFrom(startAddress: Int, count: Int) async throws -> [Bool]
     {
+        try await readInputCoilsFrom(startAddress: startAddress, count: count, deviceAddress: defaultDeviceAddress)
+    }
+
+    public func readInputCoilsFrom(startAddress: Int, count: Int, deviceAddress: UInt16) async throws -> [Bool]
+    {
         try await connectWhenNeeded(); defer { startDisconnectWhenIdleTimer() }
+        try selectDevice(address: deviceAddress)
 
         var buffer = [UInt8](repeating: 0, count: count)
         let result = buffer.withUnsafeMutableBufferPointer { ptr in
@@ -204,7 +240,13 @@ public actor ModbusDevice
 
     public func writeInputCoil(startAddress: Int, value: Bool) async throws
     {
+        try await writeInputCoil(startAddress: startAddress, value: value, deviceAddress: defaultDeviceAddress)
+    }
+
+    public func writeInputCoil(startAddress: Int, value: Bool, deviceAddress: UInt16) async throws
+    {
         try await connectWhenNeeded(); defer { startDisconnectWhenIdleTimer() }
+        try selectDevice(address: deviceAddress)
 
         guard modbus_write_bit(self.modbusdevice, Int32(startAddress), value ? 1 : 0) >= 0
         else
@@ -216,7 +258,13 @@ public actor ModbusDevice
 
     public func readInputBitsFrom(startAddress: Int, count: Int) async throws -> [Bool]
     {
+        try await readInputBitsFrom(startAddress: startAddress, count: count, deviceAddress: defaultDeviceAddress)
+    }
+
+    public func readInputBitsFrom(startAddress: Int, count: Int, deviceAddress: UInt16) async throws -> [Bool]
+    {
         try await connectWhenNeeded(); defer { startDisconnectWhenIdleTimer() }
+        try selectDevice(address: deviceAddress)
 
         var buffer = [UInt8](repeating: 0, count: count)
         let result = buffer.withUnsafeMutableBufferPointer { ptr in
@@ -238,14 +286,29 @@ public actor ModbusDevice
         return try await readRegisters(from: startAddress, count: count, type: .input, endianness: endianness) as [T]
     }
 
+    public func readInputRegisters<T: FixedWidthInteger>(from startAddress: Int, count: Int, endianness: ModbusDeviceEndianness = .bigEndian, deviceAddress: UInt16) async throws -> [T]
+    {
+        return try await readRegisters(from: startAddress, count: count, type: .input, endianness: endianness, deviceAddress: deviceAddress) as [T]
+    }
+
     public func readHoldingRegisters<T: FixedWidthInteger>(from startAddress: Int, count: Int, endianness: ModbusDeviceEndianness = .bigEndian) async throws -> [T]
     {
         return try await readRegisters(from: startAddress, count: count, type: .holding, endianness: endianness) as [T]
     }
 
+    public func readHoldingRegisters<T: FixedWidthInteger>(from startAddress: Int, count: Int, endianness: ModbusDeviceEndianness = .bigEndian, deviceAddress: UInt16) async throws -> [T]
+    {
+        return try await readRegisters(from: startAddress, count: count, type: .holding, endianness: endianness, deviceAddress: deviceAddress) as [T]
+    }
+
     public func readASCIIString(from: Int, count: Int, type: ModbusRegisterType, endianness: ModbusDeviceEndianness = .bigEndian) async throws -> String
     {
-        let values: [UInt8] = try await readRegisters(from: from, count: count, type: type, endianness: endianness)
+        try await readASCIIString(from: from, count: count, type: type, endianness: endianness, deviceAddress: defaultDeviceAddress)
+    }
+
+    public func readASCIIString(from: Int, count: Int, type: ModbusRegisterType, endianness: ModbusDeviceEndianness = .bigEndian, deviceAddress: UInt16) async throws -> String
+    {
+        let values: [UInt8] = try await readRegisters(from: from, count: count, type: type, endianness: endianness, deviceAddress: deviceAddress)
 
         let validCharacters = values[0 ..< (values.firstIndex(where: { $0 == 0 }) ?? values.count)]
         let string = String(validCharacters.map { Character(UnicodeScalar($0)) })
@@ -254,12 +317,17 @@ public actor ModbusDevice
 
     public func writeASCIIString(start: Int, count: Int, string: String, endianness: ModbusDeviceEndianness = .bigEndian) async throws
     {
+        try await writeASCIIString(start: start, count: count, string: string, endianness: endianness, deviceAddress: defaultDeviceAddress)
+    }
+
+    public func writeASCIIString(start: Int, count: Int, string: String, endianness: ModbusDeviceEndianness = .bigEndian, deviceAddress: UInt16) async throws
+    {
         var values = [UInt8](repeating: 0, count: count)
         for (index, character) in string.enumerated()
         {
             values[index] = character.asciiValue ?? 0
         }
-        try await writeRegisters(to: start, arrayToWrite: values, endianness: endianness)
+        try await writeRegisters(to: start, arrayToWrite: values, endianness: endianness, deviceAddress: deviceAddress)
     }
 
     private func convertBigEndian(typedPointer: UnsafeMutablePointer<some FixedWidthInteger>, count: Int)
@@ -289,7 +357,13 @@ public actor ModbusDevice
 
     public func readRegisters<T: FixedWidthInteger>(from startAddress: Int, count: Int, type: ModbusRegisterType, endianness: ModbusDeviceEndianness = .bigEndian) async throws -> [T]
     {
+        try await readRegisters(from: startAddress, count: count, type: type, endianness: endianness, deviceAddress: defaultDeviceAddress)
+    }
+
+    public func readRegisters<T: FixedWidthInteger>(from startAddress: Int, count: Int, type: ModbusRegisterType, endianness: ModbusDeviceEndianness = .bigEndian, deviceAddress: UInt16) async throws -> [T]
+    {
         try await connectWhenNeeded(); defer { startDisconnectWhenIdleTimer() }
+        try selectDevice(address: deviceAddress)
 
         let wordCount = ((T.bitWidth * count) + 15) / 16
         let byteCount = wordCount * 2
@@ -320,7 +394,13 @@ public actor ModbusDevice
 
     public func readRegisters<T: FloatingPoint>(from startAddress: Int, count: Int, type: ModbusRegisterType, endianness: ModbusDeviceEndianness = .bigEndian) async throws -> [T]
     {
+        try await readRegisters(from: startAddress, count: count, type: type, endianness: endianness, deviceAddress: defaultDeviceAddress)
+    }
+
+    public func readRegisters<T: FloatingPoint>(from startAddress: Int, count: Int, type: ModbusRegisterType, endianness: ModbusDeviceEndianness = .bigEndian, deviceAddress: UInt16) async throws -> [T]
+    {
         try await connectWhenNeeded(); defer { startDisconnectWhenIdleTimer() }
+        try selectDevice(address: deviceAddress)
 
         let wordCount = ((MemoryLayout<T>.size * 8 * count) + 15) / 16
         let byteCount = wordCount * 2
@@ -351,7 +431,13 @@ public actor ModbusDevice
 
     public func writeRegisters<T: FixedWidthInteger>(to startAddress: Int, arrayToWrite: [T], endianness: ModbusDeviceEndianness = .bigEndian) async throws
     {
+        try await writeRegisters(to: startAddress, arrayToWrite: arrayToWrite, endianness: endianness, deviceAddress: defaultDeviceAddress)
+    }
+
+    public func writeRegisters<T: FixedWidthInteger>(to startAddress: Int, arrayToWrite: [T], endianness: ModbusDeviceEndianness = .bigEndian, deviceAddress: UInt16) async throws
+    {
         try await connectWhenNeeded(); defer { startDisconnectWhenIdleTimer() }
+        try selectDevice(address: deviceAddress)
         guard arrayToWrite.count > 0 else { return }
 
         let wordCount = ((T.bitWidth * arrayToWrite.count) + 15) / 16

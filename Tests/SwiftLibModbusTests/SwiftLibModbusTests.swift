@@ -106,6 +106,104 @@ private func responseTimeout(of context: OpaquePointer) -> timeval
     return timeout
 }
 
+private func receiveExactly(_ count: Int, from socket: Int32) throws -> [UInt8]
+{
+    var bytes = [UInt8](repeating: 0, count: count)
+    var received = 0
+
+    while received < count
+    {
+        let result = bytes.withUnsafeMutableBytes { buffer in
+            recv(socket, buffer.baseAddress!.advanced(by: received), count - received, 0)
+        }
+        guard result > 0
+        else
+        {
+            throw NSError(domain: "ModbusTestServer", code: Int(errno), userInfo: [NSLocalizedDescriptionKey: "Could not receive request"])
+        }
+        received += result
+    }
+
+    return bytes
+}
+
+private func sendAll(_ bytes: [UInt8], to socket: Int32) throws
+{
+    var sent = 0
+
+    while sent < bytes.count
+    {
+        let result = bytes.withUnsafeBytes { buffer in
+            send(socket, buffer.baseAddress!.advanced(by: sent), bytes.count - sent, 0)
+        }
+        guard result > 0
+        else
+        {
+            throw NSError(domain: "ModbusTestServer", code: Int(errno), userInfo: [NSLocalizedDescriptionKey: "Could not send response"])
+        }
+        sent += result
+    }
+}
+
+private func serveRegisterReads(count: Int, on server: TCPListeningSocket) async throws -> [UInt8]
+{
+    try await withCheckedThrowingContinuation { continuation in
+        DispatchQueue.global().async
+        {
+            let client = accept(server.descriptor, nil, nil)
+            guard client >= 0
+            else
+            {
+                continuation.resume(throwing: NSError(domain: "ModbusTestServer", code: Int(errno)))
+                return
+            }
+            defer { _ = close(client) }
+
+            do
+            {
+                var addresses = [UInt8]()
+                for _ in 0 ..< count
+                {
+                    let header = try receiveExactly(7, from: client)
+                    let messageLength = Int(header[4]) << 8 | Int(header[5])
+                    let body = try receiveExactly(messageLength - 1, from: client)
+                    let address = header[6]
+                    addresses.append(address)
+
+                    let response: [UInt8] = [
+                        header[0], header[1], 0, 0, 0, 5,
+                        address, body[0], 2, 0, address,
+                    ]
+                    try sendAll(response, to: client)
+                }
+                continuation.resume(returning: addresses)
+            }
+            catch
+            {
+                continuation.resume(throwing: error)
+            }
+        }
+    }
+}
+
+// Kept as a compile-time contract for all address-aware overloads. The packet-level
+// test below exercises the common transaction path without requiring live hardware.
+private func compileAddressAwareAPI(_ device: ModbusDevice) async throws
+{
+    let _: [Bool] = try await device.readInputBitsFrom(startAddress: 0, count: 1, type: .coil, deviceAddress: 1)
+    let _: [Bool] = try await device.readInputCoilsFrom(startAddress: 0, count: 1, deviceAddress: 1)
+    let _: [Bool] = try await device.readInputBitsFrom(startAddress: 0, count: 1, deviceAddress: 1)
+    try await device.writeInputCoil(startAddress: 0, value: true, deviceAddress: 1)
+
+    let _: [UInt16] = try await device.readInputRegisters(from: 0, count: 1, deviceAddress: 1)
+    let _: [UInt16] = try await device.readHoldingRegisters(from: 0, count: 1, deviceAddress: 1)
+    let _: [UInt16] = try await device.readRegisters(from: 0, count: 1, type: .holding, deviceAddress: 1)
+    let _: [Float32] = try await device.readRegisters(from: 0, count: 1, type: .holding, deviceAddress: 1)
+    let _: String = try await device.readASCIIString(from: 0, count: 1, type: .holding, deviceAddress: 1)
+    try await device.writeRegisters(to: 0, arrayToWrite: [UInt16(1)], deviceAddress: 1)
+    try await device.writeASCIIString(start: 0, count: 1, string: "A", deviceAddress: 1)
+}
+
 @Suite("Device Tests")
 struct DeviceTests
 {
@@ -227,5 +325,22 @@ struct DeviceTests
             #expect(currentTimeout.tv_sec == expectedTimeout.tv_sec)
             #expect(currentTimeout.tv_usec == expectedTimeout.tv_usec)
         }
+    }
+
+    @Test("TCP operations select their device address atomically")
+    func tcpOperationsSelectDeviceAddressAtomically() async throws
+    {
+        let server = try TCPListeningSocket()
+        defer { server.closeSocket() }
+
+        async let observedAddresses = serveRegisterReads(count: 2, on: server)
+        let device = try ModbusDevice(networkAddress: "127.0.0.1", port: server.port, deviceAddress: 42, disconnectWhenIdleAfter: 0)
+
+        async let firstRead: [UInt16] = device.readRegisters(from: 0, count: 1, type: .holding, deviceAddress: 1)
+        async let secondRead: [UInt16] = device.readRegisters(from: 0, count: 1, type: .holding, deviceAddress: 2)
+
+        let (first, second, addresses) = try await (firstRead, secondRead, observedAddresses)
+        #expect(Set(addresses) == Set([1, 2]))
+        #expect(Set([first[0], second[0]]) == Set([1, 2]))
     }
 }
