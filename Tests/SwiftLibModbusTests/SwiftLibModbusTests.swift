@@ -99,11 +99,12 @@ private struct TCPListeningSocket
     }
 }
 
-private func responseTimeout(of context: OpaquePointer) -> timeval
+private func responseTimeout(of context: OpaquePointer) -> (seconds: UInt32, microseconds: UInt32)
 {
-    var timeout = timeval()
-    modbus_get_response_timeout(context, &timeout)
-    return timeout
+    var seconds: UInt32 = 0
+    var microseconds: UInt32 = 0
+    #expect(modbus_get_response_timeout(context, &seconds, &microseconds) == 0)
+    return (seconds, microseconds)
 }
 
 private func receiveExactly(_ count: Int, from socket: Int32) throws -> [UInt8]
@@ -207,6 +208,14 @@ private func compileAddressAwareAPI(_ device: ModbusDevice) async throws
 @Suite("Device Tests")
 struct DeviceTests
 {
+    @Test("Bundled libmodbus version is 3.2.0")
+    func bundledLibmodbusVersion()
+    {
+        #expect(libmodbus_version_major == 3)
+        #expect(libmodbus_version_minor == 2)
+        #expect(libmodbus_version_micro == 0)
+    }
+
     @Test("Reverse Engineer HM310T", .disabled("Only works when attached"))
     func reverseEngineerHM310T() async throws
     {
@@ -304,8 +313,7 @@ struct DeviceTests
         }
         defer { modbus_free(context) }
 
-        var configuredTimeout = timeval(tv_sec: 0, tv_usec: 200_000)
-        modbus_set_response_timeout(context, &configuredTimeout)
+        #expect(modbus_set_response_timeout(context, 0, 200_000) == 0)
 
         let expectedTimeout = responseTimeout(of: context)
 
@@ -322,8 +330,8 @@ struct DeviceTests
             modbus_close(context)
 
             let currentTimeout = responseTimeout(of: context)
-            #expect(currentTimeout.tv_sec == expectedTimeout.tv_sec)
-            #expect(currentTimeout.tv_usec == expectedTimeout.tv_usec)
+            #expect(currentTimeout.seconds == expectedTimeout.seconds)
+            #expect(currentTimeout.microseconds == expectedTimeout.microseconds)
         }
     }
 
@@ -334,7 +342,7 @@ struct DeviceTests
         defer { server.closeSocket() }
 
         async let observedAddresses = serveRegisterReads(count: 2, on: server)
-        let device = try ModbusDevice(networkAddress: "127.0.0.1", port: server.port, deviceAddress: 42, disconnectWhenIdleAfter: 0)
+        let device = try ModbusDevice(networkAddress: "localhost", port: server.port, deviceAddress: 42, disconnectWhenIdleAfter: 0)
 
         async let firstRead: [UInt16] = device.readRegisters(from: 0, count: 1, type: .holding, deviceAddress: 1)
         async let secondRead: [UInt16] = device.readRegisters(from: 0, count: 1, type: .holding, deviceAddress: 2)

@@ -3,7 +3,7 @@
 SwiftLibModbus is a modern Swift wrapper around the libmodbus C library, providing a convenient, type-safe interface for communicating with Modbus devices using Swift Concurrency features.
 
 [![Swift](https://img.shields.io/badge/Swift-6.3-orange.svg)](https://swift.org)
-[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-MIT%20%2F%20LGPL--2.1--or--later-blue.svg)](LICENSE)
 
 ## Overview
 
@@ -30,7 +30,7 @@ Add SwiftLibModbus as a dependency to your `Package.swift` file:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/jollyjinx/SwiftLibModbus.git", from: "2.0.0")
+    .package(url: "https://github.com/jollyjinx/SwiftLibModbus.git", from: "3.0.0")
 ]
 ```
 
@@ -169,4 +169,4 @@ For more complete examples, see:
 
 ## License
 
-SwiftLibModbus Version 2 has been developed by @jollyjinx for Swift Concurrency Support and is available under the MIT license. The underlying libmodbus C library is licensed under LGPL.
+SwiftLibModbus Version 3 has been developed by @jollyjinx for Swift Concurrency Support and is available under the MIT license. The bundled libmodbus 3.2.0 C library is licensed under LGPL-2.1-or-later; see [LICENSES/libmodbus-LGPL-2.1-or-later.txt](LICENSES/libmodbus-LGPL-2.1-or-later.txt).

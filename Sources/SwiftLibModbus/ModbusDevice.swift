@@ -103,30 +103,25 @@ public actor ModbusDevice
         self.disconnectWhenIdleAfter = disconnectWhenIdleAfter
         defaultDeviceAddress = deviceAddress
 
-        let host = Host(name: networkAddress)
-        let ipAddresses = host.addresses
-
-        guard ipAddresses.count > 0
-        else
-        {
-            throw ModbusError.couldNotCreateDevice(error: "No Addresses for Name:\(networkAddress) found.")
-        }
-
-        for ipAddress in ipAddresses
-        {
-            if let device = modbus_new_tcp(ipAddress.cString(using: String.Encoding.ascii), Int32(port))
-            {
-                modbusdevice = device
-                let modbusErrorRecoveryMode = modbus_error_recovery_mode(rawValue: MODBUS_ERROR_RECOVERY_LINK.rawValue | MODBUS_ERROR_RECOVERY_PROTOCOL.rawValue)
-
-                modbus_set_error_recovery(modbusdevice, modbusErrorRecoveryMode)
-                modbus_set_slave(modbusdevice, Int32(deviceAddress))
-                return
+        let service = String(port)
+        let device = networkAddress.withCString { node in
+            service.withCString { service in
+                modbus_new_tcp_pi(node, service)
             }
         }
 
-        let errorString = String(cString: modbus_strerror(errno))
-        throw ModbusError.couldNotCreateDevice(error: "could not create device:\(errorString) ipAddresses:\(ipAddresses)")
+        guard let device
+        else
+        {
+            let errorString = String(cString: modbus_strerror(errno))
+            throw ModbusError.couldNotCreateDevice(error: "Could not create TCP device for \(networkAddress):\(port): \(errorString)")
+        }
+
+        modbusdevice = device
+        let modbusErrorRecoveryMode = modbus_error_recovery_mode(rawValue: MODBUS_ERROR_RECOVERY_LINK.rawValue | MODBUS_ERROR_RECOVERY_PROTOCOL.rawValue)
+
+        modbus_set_error_recovery(modbusdevice, modbusErrorRecoveryMode)
+        modbus_set_slave(modbusdevice, Int32(deviceAddress))
     }
 
     public func connect() async throws
