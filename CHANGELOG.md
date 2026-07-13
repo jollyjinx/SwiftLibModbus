@@ -1,6 +1,6 @@
 # Changelog
 
-## 3.0.0 (Unreleased)
+## 3.0.0 (2026-07-13)
 
 - Updated the bundled libmodbus C library from the legacy 3.1.0-era sources to upstream 3.2.0.
 - Imported upstream request validation, bounds checks, TCP reconnect and socket lifecycle fixes, RTU improvements, and integer/float conversion hardening.
