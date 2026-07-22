@@ -1,172 +1,165 @@
 # SwiftLibModbus
 
-SwiftLibModbus is a modern Swift wrapper around the libmodbus C library, providing a convenient, type-safe interface for communicating with Modbus devices using Swift Concurrency features.
+SwiftLibModbus is a Swift Concurrency wrapper around the bundled [libmodbus](https://libmodbus.org/) C library. It provides an actor-isolated API for Modbus TCP and RTU devices, typed register access, coil operations, endianness conversion, connection lifecycle management, and per-operation device addressing.
 
 [![Swift](https://img.shields.io/badge/Swift-6.3-orange.svg)](https://swift.org)
 [![License](https://img.shields.io/badge/License-MIT%20%2F%20LGPL--2.1--or--later-blue.svg)](LICENSE)
 
-## Overview
-
-SwiftLibModbus leverages Swift Concurrency (async/await) to provide a clean, efficient API for Modbus RTU and TCP communication. The library is designed for ease of use while maintaining the full power of the underlying libmodbus implementation.
-
-Key features:
-- Swift Concurrency support (async/await)
-- Support for Modbus RTU (serial) and Modbus TCP connections
-- Type-safe register/coil reading and writing
-- Automatic connection management 
-- Swift actor model for thread safety
-- Easy handling of endianness
-
 ## Requirements
 
-- Swift 6.3+
-- iOS 18+ or macOS 15+
+- Swift 6.3 or newer
+- macOS 15 or newer
+- iOS 18 or newer
+- Linux with a Swift 6.3-compatible toolchain
+
+The libmodbus 3.2.0 sources are included in the package; consumers do not need to install libmodbus separately.
 
 ## Installation
 
-### Swift Package Manager
-
-Add SwiftLibModbus as a dependency to your `Package.swift` file:
+Add the package through Swift Package Manager:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/jollyjinx/SwiftLibModbus.git", from: "3.0.0")
+    .package(
+        url: "https://gitmaster.jinx.eu/jnxpublic/SwiftLibModbus.git",
+        from: "3.0.0"
+    )
 ]
 ```
 
-Then add the dependency to your target:
+Then add the Swift wrapper product to your target:
 
 ```swift
 .target(
     name: "YourTarget",
-    dependencies: ["SwiftLibModbus"]
+    dependencies: [
+        .product(name: "SwiftLibModbus", package: "SwiftLibModbus")
+    ]
 )
 ```
 
-## Usage
+The package also publishes `CModbus` for callers that intentionally need the underlying C API.
 
-### Connecting to a Modbus TCP Device
+## Modbus TCP
 
 ```swift
 import SwiftLibModbus
 
-// Connect to a Modbus TCP device
 let device = try ModbusDevice(
-    networkAddress: "192.168.1.100", 
+    networkAddress: "192.168.1.100",
     port: 502,
     deviceAddress: 1
 )
 
-// Read holding registers
-let holdingRegisters: [UInt16] = try await device.readHoldingRegisters(
-    from: 0x1000, 
+let registers: [UInt16] = try await device.readHoldingRegisters(
+    from: 0x1000,
     count: 16
 )
 
-// Write to holding registers
 try await device.writeRegisters(
-    to: 0x1000, 
+    to: 0x1000,
     arrayToWrite: [UInt16(1), UInt16(2), UInt16(3)]
 )
 ```
 
-### Connecting to a Modbus RTU Device
+TCP connections are established when needed. You can also call `connect()` and `disconnect()` explicitly. The actor serializes access to the shared libmodbus context, including device-address selection.
+
+### Addressing multiple devices
+
+Every read and write operation has an overload that accepts `deviceAddress`. This is useful for gateways that expose multiple Modbus devices through one connection:
+
+```swift
+let first: [UInt16] = try await device.readHoldingRegisters(
+    from: 0,
+    count: 1,
+    deviceAddress: 1
+)
+
+let second: [UInt16] = try await device.readHoldingRegisters(
+    from: 0,
+    count: 1,
+    deviceAddress: 2
+)
+```
+
+## Modbus RTU
 
 ```swift
 import SwiftLibModbus
 
-// Connect to a Modbus RTU (serial) device
 let device = try ModbusDevice(
     device: "/dev/tty.usbserial-42340",
     slaveid: 1,
-    baudRate: 9600,
+    baudRate: 9_600,
     dataBits: 8,
     parity: .none,
     stopBits: 1
 )
 
-// Read coils
 let coils = try await device.readInputCoilsFrom(
-    startAddress: 0x00, 
+    startAddress: 0,
     count: 10
 )
 
-// Read input registers
 let inputRegisters: [UInt16] = try await device.readInputRegisters(
-    from: 0x00, 
+    from: 0,
     count: 10
 )
 ```
 
-### Reading Different Data Types
+## Typed registers and strings
 
-The library supports reading various fixed-width integer types as well as floating point values:
-
-```swift
-// Read as 16-bit unsigned integers
-let uint16Values: [UInt16] = try await device.readRegisters(
-    from: 0x1000, 
-    count: 10, 
-    type: .holding
-)
-
-// Read as 32-bit unsigned integers
-let uint32Values: [UInt32] = try await device.readRegisters(
-    from: 0x1000, 
-    count: 5, 
-    type: .holding
-)
-
-// Read as IEEE-754 floating point
-let floatValues: [Float] = try await device.readRegisters(
-    from: 0x1000, 
-    count: 5, 
-    type: .holding
-)
-
-// Read as ASCII string
-let asciiString = try await device.readASCIIString(
-    from: 0x1000, 
-    count: 10, 
-    type: .holding
-)
-```
-
-### Handling Endianness
-
-You can specify endianness when reading or writing registers:
+The generic register APIs support fixed-width integers and floating-point values. `count` is the number of requested values of the inferred result type, while Modbus transfers still operate on 16-bit register words.
 
 ```swift
-// Read registers with little endian byte order
-let values: [UInt32] = try await device.readRegisters(
-    from: 0x1000, 
-    count: 10, 
-    type: .holding, 
+let words: [UInt16] = try await device.readRegisters(
+    from: 0x1000,
+    count: 10,
+    type: .holding
+)
+
+let values: [Float32] = try await device.readRegisters(
+    from: 0x1000,
+    count: 5,
+    type: .holding,
     endianness: .littleEndian
 )
+
+let label = try await device.readASCIIString(
+    from: 0x1100,
+    count: 16,
+    type: .holding
+)
 ```
 
-## Auto-Reconnect and Idle Disconnect Features
+## Connection lifecycle
 
-The library has built-in management for connections:
+`autoReconnectAfter` closes long-lived connections after the configured interval so the next operation reconnects. `disconnectWhenIdleAfter` closes an idle connection after the configured interval. Set either value to `0` to disable that timer.
 
 ```swift
-// Connect with auto-reconnect after 1 hour and disconnect when idle for 30 seconds
 let device = try ModbusDevice(
     networkAddress: "example.com",
     port: 502,
     deviceAddress: 1,
-    autoReconnectAfter: 3600.0,  // 1 hour in seconds
-    disconnectWhenIdleAfter: 30.0  // 30 seconds
+    autoReconnectAfter: 3_600,
+    disconnectWhenIdleAfter: 30
 )
 ```
 
-## Example Projects
+Operations throw `ModbusError` when a device cannot be created or connected, or when a read or write fails.
 
-For more complete examples, see:
+## Development
 
-- [swift-modbus-2-mqtt-bridge](https://github.com/jollyjinx/swift-modbus-2-mqtt-bridge) - A bridge converting Modbus to MQTT
+Run the package test suite from the repository root:
+
+```sh
+swift test
+```
+
+The default suite checks the bundled C-library version, API compilation, timeout behavior, and per-operation addressing through a loopback TCP server. Tests that require physical Modbus hardware are disabled unless deliberately enabled in the test source.
+
+See [AI/ARCHITECTURE.md](AI/ARCHITECTURE.md) for module boundaries, concurrency behavior, vendored-source policy, and validation guidance. Release changes are recorded in [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
-SwiftLibModbus Version 3 has been developed by @jollyjinx for Swift Concurrency Support and is available under the MIT license. The bundled libmodbus 3.2.0 C library is licensed under LGPL-2.1-or-later; see [LICENSES/libmodbus-LGPL-2.1-or-later.txt](LICENSES/libmodbus-LGPL-2.1-or-later.txt).
+The Swift wrapper is available under the [MIT License](LICENSE). The bundled libmodbus 3.2.0 C sources are licensed under [LGPL-2.1-or-later](LICENSES/libmodbus-LGPL-2.1-or-later.txt); provenance and SwiftPM-specific adaptations are documented in [Sources/CModbus/UPSTREAM.md](Sources/CModbus/UPSTREAM.md).
