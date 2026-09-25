@@ -4,7 +4,7 @@
 
 import CModbus
 import Foundation
-import SwiftLibModbus
+@testable import SwiftLibModbus
 import Testing
 
 #if canImport(Darwin)
@@ -105,6 +105,14 @@ private func responseTimeout(of context: OpaquePointer) -> (seconds: UInt32, mic
     var microseconds: UInt32 = 0
     #expect(modbus_get_response_timeout(context, &seconds, &microseconds) == 0)
     return (seconds, microseconds)
+}
+
+private extension ModbusDevice
+{
+    func configuredResponseTimeoutForTesting() -> (seconds: UInt32, microseconds: UInt32)
+    {
+        responseTimeout(of: modbusdevice)
+    }
 }
 
 private func receiveExactly(_ count: Int, from socket: Int32) throws -> [UInt8]
@@ -214,6 +222,27 @@ struct DeviceTests
         #expect(libmodbus_version_major == 3)
         #expect(libmodbus_version_minor == 2)
         #expect(libmodbus_version_micro == 0)
+    }
+
+    @Test("TCP initializer configures the libmodbus response timeout")
+    func responseTimeoutConfiguration() async throws
+    {
+        let device = try ModbusDevice(networkAddress: "127.0.0.1",
+                                      port: 502,
+                                      deviceAddress: 1,
+                                      responseTimeout: 2.25)
+        let timeout = await device.configuredResponseTimeoutForTesting()
+        #expect(timeout.seconds == 2)
+        #expect(timeout.microseconds == 250_000)
+    }
+
+    @Test("Invalid response timeouts are rejected", arguments: [0.0, -1.0, Double.infinity, Double.nan])
+    func rejectsInvalidResponseTimeout(_ responseTimeout: TimeInterval)
+    {
+        #expect(throws: ModbusError.self)
+        {
+            _ = try responseTimeoutComponents(responseTimeout)
+        }
     }
 
     @Test("Reverse Engineer HM310T", .disabled("Only works when attached"))

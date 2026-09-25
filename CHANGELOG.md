@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.1.0 (2026-09-25)
+
+- Added a configurable `responseTimeout` to the TCP and RTU `ModbusDevice` initializers while preserving the existing 0.5-second default.
+
 ## 3.0.0 (2026-07-13)
 
 - Updated the bundled libmodbus C library from the legacy 3.1.0-era sources to upstream 3.2.0.

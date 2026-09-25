@@ -22,7 +22,7 @@ Add the package through Swift Package Manager:
 dependencies: [
     .package(
         url: "https://gitmaster.jinx.eu/jnxpublic/SwiftLibModbus.git",
-        from: "3.0.0"
+        from: "3.1.0"
     )
 ]
 ```
@@ -145,6 +145,20 @@ let device = try ModbusDevice(
     disconnectWhenIdleAfter: 30
 )
 ```
+
+The libmodbus response timeout defaults to 0.5 seconds. Set `responseTimeout`
+when a device can occasionally take longer to answer:
+
+```swift
+let device = try ModbusDevice(
+    networkAddress: "example.com",
+    port: 502,
+    deviceAddress: 1,
+    responseTimeout: 2.0
+)
+```
+
+The timeout is expressed in seconds, must be finite, and must be greater than zero.
 
 Operations throw `ModbusError` when a device cannot be created or connected, or when a read or write fails.
 

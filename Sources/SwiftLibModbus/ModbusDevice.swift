@@ -48,6 +48,43 @@ public enum ModbusParity: Sendable
     }
 }
 
+func responseTimeoutComponents(_ responseTimeout: TimeInterval) throws -> (seconds: UInt32, microseconds: UInt32)
+{
+    guard responseTimeout.isFinite, responseTimeout > 0
+    else
+    {
+        throw ModbusError.couldNotCreateDevice(error: "Response timeout must be a finite value greater than zero seconds")
+    }
+
+    let wholeSeconds = floor(responseTimeout)
+    guard wholeSeconds <= Double(UInt32.max)
+    else
+    {
+        throw ModbusError.couldNotCreateDevice(error: "Response timeout is too large")
+    }
+
+    var seconds = UInt32(wholeSeconds)
+    var microseconds = UInt32(((responseTimeout - wholeSeconds) * 1_000_000).rounded())
+    if microseconds == 1_000_000
+    {
+        guard seconds < UInt32.max
+        else
+        {
+            throw ModbusError.couldNotCreateDevice(error: "Response timeout is too large")
+        }
+        seconds += 1
+        microseconds = 0
+    }
+
+    guard seconds > 0 || microseconds > 0
+    else
+    {
+        throw ModbusError.couldNotCreateDevice(error: "Response timeout must be at least one microsecond")
+    }
+
+    return (seconds, microseconds)
+}
+
 public actor ModbusDevice
 {
     // Run the actor on a dedicated serial executor so blocking libmodbus calls
@@ -68,7 +105,7 @@ public actor ModbusDevice
 
     var connected = false
 
-    public init(device: String, slaveid: Int = 1, baudRate: Int = 9600, dataBits: Int = 8, parity: ModbusParity = .none, stopBits: Int = 1, autoReconnectAfter: TimeInterval = 10.0, disconnectWhenIdleAfter: TimeInterval = 10.0) throws
+    public init(device: String, slaveid: Int = 1, baudRate: Int = 9600, dataBits: Int = 8, parity: ModbusParity = .none, stopBits: Int = 1, autoReconnectAfter: TimeInterval = 10.0, disconnectWhenIdleAfter: TimeInterval = 10.0, responseTimeout: TimeInterval = 0.5) throws
     {
         guard let deviceAddress = UInt16(exactly: slaveid), deviceAddress <= 247
         else
@@ -76,11 +113,22 @@ public actor ModbusDevice
             throw ModbusError.couldNotCreateDevice(error: "Invalid Modbus device address: \(slaveid)")
         }
 
+        let timeout = try responseTimeoutComponents(responseTimeout)
+
         guard let modbusdevice = modbus_new_rtu(device.cString(using: .utf8), Int32(baudRate), CChar(parity.value), Int32(dataBits), Int32(stopBits))
         else
         {
             throw ModbusError.couldNotCreateDevice(error: "Could not create device:\(device) (\(baudRate)-\(parity)-\(stopBits))")
         }
+
+        guard modbus_set_response_timeout(modbusdevice, timeout.seconds, timeout.microseconds) == 0
+        else
+        {
+            let errorString = String(cString: modbus_strerror(errno))
+            modbus_free(modbusdevice)
+            throw ModbusError.couldNotCreateDevice(error: "Could not configure response timeout: \(errorString)")
+        }
+
         self.autoReconnectAfter = autoReconnectAfter
         self.disconnectWhenIdleAfter = disconnectWhenIdleAfter
         self.modbusdevice = modbusdevice
@@ -91,13 +139,15 @@ public actor ModbusDevice
         modbus_connect(self.modbusdevice)
     }
 
-    public init(networkAddress: String, port: UInt16, deviceAddress: UInt16, autoReconnectAfter: TimeInterval = 3600.0, disconnectWhenIdleAfter: TimeInterval = 10.0) throws
+    public init(networkAddress: String, port: UInt16, deviceAddress: UInt16, autoReconnectAfter: TimeInterval = 3600.0, disconnectWhenIdleAfter: TimeInterval = 10.0, responseTimeout: TimeInterval = 0.5) throws
     {
         guard deviceAddress <= 247 || deviceAddress == 255
         else
         {
             throw ModbusError.couldNotCreateDevice(error: "Invalid Modbus TCP device address: \(deviceAddress)")
         }
+
+        let timeout = try responseTimeoutComponents(responseTimeout)
 
         self.autoReconnectAfter = autoReconnectAfter
         self.disconnectWhenIdleAfter = disconnectWhenIdleAfter
@@ -115,6 +165,14 @@ public actor ModbusDevice
         {
             let errorString = String(cString: modbus_strerror(errno))
             throw ModbusError.couldNotCreateDevice(error: "Could not create TCP device for \(networkAddress):\(port): \(errorString)")
+        }
+
+        guard modbus_set_response_timeout(device, timeout.seconds, timeout.microseconds) == 0
+        else
+        {
+            let errorString = String(cString: modbus_strerror(errno))
+            modbus_free(device)
+            throw ModbusError.couldNotCreateDevice(error: "Could not configure response timeout: \(errorString)")
         }
 
         modbusdevice = device
